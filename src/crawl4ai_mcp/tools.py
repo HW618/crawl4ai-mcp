@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 
 from .converter import convert_to_markdown, extract_summary
-from .crawler import crawl_page, fetch_page
-from .models import SiteStrategy
+from .crawler import crawl_page, deep_crawl_pages, fetch_page
+from .deep_crawl import SUPPORTED_DEEP_STRATEGIES, clamp_max_depth, clamp_max_pages
+from .models import CrawlResult, SiteStrategy
 from .search import SUPPORTED_ENGINES, build_serp_url, parse_serp_html
 
 
@@ -137,6 +138,92 @@ async def tool_fetch_url(
         },
         ensure_ascii=False,
     )
+
+
+def _pages_payload(
+    rows: list[dict],
+    *,
+    error: str = "",
+) -> str:
+    succeeded = sum(1 for r in rows if r.get("success"))
+    failed = len(rows) - succeeded
+    return json.dumps(
+        {
+            "pages": rows,
+            "stats": {"crawled": len(rows), "succeeded": succeeded, "failed": failed},
+            "error": error,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _page_row(
+    result: CrawlResult,
+    *,
+    depth: int | None = None,
+    score: float | None = None,
+    max_chars: int | None = None,
+) -> dict:
+    markdown = ""
+    if result.success:
+        convert_kwargs: dict = {}
+        if max_chars is not None:
+            convert_kwargs["max_chars"] = max_chars
+        markdown = convert_to_markdown(result, **convert_kwargs)
+    row: dict = {
+        "url": result.url,
+        "title": result.title or "",
+        "markdown": markdown,
+        "success": bool(result.success),
+        "error": "" if result.success else (result.error or "crawl failed"),
+        "strategy_name": result.strategy_name or "",
+    }
+    if depth is not None:
+        row["depth"] = depth
+    if score is not None:
+        row["score"] = score
+    return row
+
+
+async def tool_deep_crawl(
+    url: str,
+    *,
+    strategies: list[SiteStrategy],
+    strategy: str = "bfs",
+    max_depth: int = 2,
+    max_pages: int = 50,
+    include_external: bool = False,
+    keywords: list[str] | None = None,
+    timeout_sec: int = 45,
+    max_chars: int | None = None,
+    cdp_url: str | None = None,
+) -> str:
+    if err := _validate_url(url):
+        return _pages_payload([], error=err)
+    strategy_norm = (strategy or "bfs").strip().lower()
+    if strategy_norm not in SUPPORTED_DEEP_STRATEGIES:
+        return _pages_payload(
+            [],
+            error=f"Unsupported deep crawl strategy: {strategy}. Choose one of {', '.join(SUPPORTED_DEEP_STRATEGIES)}",
+        )
+    hits, hard_error = await deep_crawl_pages(
+        url,
+        strategies,
+        strategy=strategy_norm,
+        max_depth=clamp_max_depth(max_depth),
+        max_pages=clamp_max_pages(max_pages),
+        include_external=include_external,
+        keywords=keywords,
+        timeout_ms=timeout_sec * 1000,
+        cdp_url=cdp_url,
+    )
+    if hard_error and not hits:
+        return _pages_payload([], error=hard_error)
+    rows = [
+        _page_row(result, depth=depth, score=score, max_chars=max_chars)
+        for result, depth, score in hits
+    ]
+    return _pages_payload(rows, error=hard_error)
 
 
 async def tool_web_search(
