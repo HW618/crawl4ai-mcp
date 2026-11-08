@@ -86,7 +86,7 @@ Authorization: Bearer <api_key>
 
 ## Site strategies
 
-Builtin YAML lives in `configs/` (WeChat, Zhihu, CSDN, …). Point `CONFIG_DIR` at a directory of extra `*.yaml` files to override by `name` or prefer user domain matches.
+Edit sources under repo-root `configs/` (WeChat, Zhihu, CSDN, …). The same files are packaged as `crawl4ai_mcp/builtin_configs/` for wheel/Docker installs. Point `CONFIG_DIR` at a directory of extra `*.yaml` files to override by `name` or prefer user domain matches.
 
 Example fields: `name`, `domains`, `css_selector`, `css_selector_fallbacks`, `excluded_selector`, `wait_for`, `js_snippets` (`snippet:lazy_images`), metadata selectors.
 
@@ -97,23 +97,39 @@ Example fields: `name`, `domains`, `css_selector`, `css_selector_fallbacks`, `ex
 | `CDP_URL` | Required CDP HTTP endpoint |
 | `API_KEY` | Optional fixed Bearer token |
 | `CONFIG_DIR` | Optional user strategy directory |
+| `BUILTIN_CONFIGS_DIR` | Optional override for builtin YAML directory |
 | `MCP_HOST` / `MCP_PORT` | Bind address |
-| `CRAWL4AI_MCP_DATA_DIR` | Override `~/.crawl4ai-mcp` |
+| `CRAWL4AI_MCP_DATA_DIR` | Override `~/.crawl4ai-mcp` (Compose uses `/data`) |
+| `CRAWL4AI_NO_CLOUD_NOTICE` | Set `1` to hide Crawl4AI pip banner (Compose sets this) |
 
 ## Tests
+
+Unit (no browser):
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-Live CDP / public URL checks are optional and not required for CI.
+Live Compose + CloakBrowser (stack must be up):
+
+```bash
+python3 scripts/integration_verify.py
+```
+
+Expected: CDP healthy, auth 401s, nine builtin strategies, `example.com` / Wikipedia / IANA converts, summary tool OK. See [docs/operations.md](docs/operations.md) for the checklist, measured latencies, and performance notes.
+
+## Performance (summary)
+
+On this host with CloakBrowser `0.6.5`, simple pages convert in ~1 s; larger pages ~2 s. Second `example.com` call is not much faster than the first, which points to **per-request CDP/crawler setup** as the main headroom. Highest-value follow-ups: reuse `AsyncWebCrawler`/CDP sessions, avoid full re-navigations on selector fallbacks, optional URL cache, and expose `max_chars` on `convert_url`. Details in [docs/operations.md](docs/operations.md).
 
 ## Non-goals (v1)
 
 - Web search or generic query tools beyond convert/summary/list
 - Changes to the `skills` repository
+- Shipping CloakBrowser `0.7+` (license key) as the default Compose image
 
-## Design
+## Design / ops docs
 
 - Spec: `docs/superpowers/specs/2026-11-08-crawl4ai-mcp-design.md`
 - Plan: `docs/superpowers/plans/2026-11-08-crawl4ai-mcp.md`
+- Operations & verification: `docs/operations.md`

@@ -37,6 +37,7 @@ services:
       API_KEY: ${API_KEY:-}
       CONFIG_DIR: ${CONFIG_DIR:-}
       CRAWL4AI_MCP_DATA_DIR: /data
+      CRAWL4AI_NO_CLOUD_NOTICE: "1"
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
