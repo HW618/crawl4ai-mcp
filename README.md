@@ -123,6 +123,8 @@ python3 scripts/integration_verify.py
 
 Expected: CDP healthy, auth 401s, nine builtin strategies, `example.com` / Wikipedia / IANA converts, summary tool OK. See [docs/operations.md](docs/operations.md) for the checklist, measured latencies, and performance notes.
 
+When bumping the upstream library, follow [docs/upgrading-crawl4ai.md](docs/upgrading-crawl4ai.md) (`crawl4ai` is exact-pinned; Dependabot + unit CI assist).
+
 ## Performance (summary)
 
 Implemented: shared CDP `AsyncWebCrawler` pool, browser-error short-circuit on selector fallbacks, TTL crawl cache (`CRAWL_CACHE_TTL_SEC`), and optional `max_chars` on `convert_url`.
@@ -140,3 +142,4 @@ On this host with CloakBrowser `0.6.5`, a cold `example.com` convert is ~1.1 s; 
 - Spec: `docs/superpowers/specs/2026-11-08-crawl4ai-mcp-design.md`
 - Plan: `docs/superpowers/plans/2026-11-08-crawl4ai-mcp.md`
 - Operations & verification: `docs/operations.md`
+- Upgrading crawl4ai: `docs/upgrading-crawl4ai.md`

@@ -1,5 +1,14 @@
 # Operations and verification
 
+## Compatibility
+
+| Component | Version / pin |
+| --- | --- |
+| crawl4ai (Python) | `==0.9.5` in `pyproject.toml` |
+| CloakBrowser | `cloakhq/cloakbrowser:0.6.5` (Compose) |
+
+See [upgrading-crawl4ai.md](upgrading-crawl4ai.md) for the pin-bump process.
+
 ## Stack
 
 | Service | Image / build | Host ports |
