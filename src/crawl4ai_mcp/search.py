@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
+import base64
+import binascii
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -47,6 +49,38 @@ def _unwrap_ddg_redirect(href: str) -> str:
     return (qs.get("uddg") or [href])[0]
 
 
+def _unwrap_google_redirect(href: str) -> str:
+    parsed = urlparse(href)
+    if parsed.path.startswith("/url") or "google." in parsed.netloc:
+        qs = parse_qs(parsed.query)
+        for key in ("q", "url"):
+            vals = qs.get(key) or []
+            if vals and vals[0].startswith(("http://", "https://")):
+                return vals[0]
+    return href
+
+
+def _unwrap_bing_redirect(href: str) -> str:
+    parsed = urlparse(href)
+    if "bing.com" not in parsed.netloc:
+        return href
+    qs = parse_qs(parsed.query)
+    raw = (qs.get("u") or [""])[0]
+    if not raw:
+        return href
+    raw = unquote(raw)
+    if raw.startswith("a1"):
+        raw = raw[2:]
+    pad = "=" * ((4 - len(raw) % 4) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(raw + pad).decode("utf-8", "ignore")
+    except (binascii.Error, ValueError):
+        return href
+    if decoded.startswith(("http://", "https://")):
+        return decoded
+    return href
+
+
 def _is_engine_host(engine: str, url: str) -> bool:
     host = urlparse(url).netloc.lower()
     return any(marker in host for marker in _ENGINE_HOST_MARKERS.get(engine, ()))
@@ -87,8 +121,9 @@ def parse_serp_html(engine: str, html: str, *, max_results: int = 8, base_url: s
             a = block.select_one("h2 a")
             if not a:
                 continue
+            href = _unwrap_bing_redirect(_abs(base, a.get("href") or ""))
             snippet_el = block.select_one(".b_caption p")
-            add(_clean_text(a), _abs(base, a.get("href") or ""), _clean_text(snippet_el))
+            add(_clean_text(a), href, _clean_text(snippet_el))
             if len(results) >= max_results:
                 break
     elif engine == "google":
@@ -98,8 +133,9 @@ def parse_serp_html(engine: str, html: str, *, max_results: int = 8, base_url: s
             a = block.select_one("a[href]")
             if not h3 or not a:
                 continue
+            href = _unwrap_google_redirect(_abs(base, a.get("href") or ""))
             snippet_el = block.select_one("div.VwiC3b, span.aCOpRe, div[data-sncf]")
-            add(_clean_text(h3), _abs(base, a.get("href") or ""), _clean_text(snippet_el))
+            add(_clean_text(h3), href, _clean_text(snippet_el))
             if len(results) >= max_results:
                 break
     else:

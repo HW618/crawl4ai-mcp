@@ -89,3 +89,98 @@ async def test_crawl_many_preserves_order_and_failures():
     assert data["stats"] == {"crawled": 2, "succeeded": 1, "failed": 1}
     assert data["pages"][0]["success"] is True
     assert data["pages"][1]["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_crawl_many_pages_keeps_remaining_after_browser_error():
+    from crawl4ai_mcp.crawler import crawl_many_pages
+
+    strategies = [SiteStrategy(name="普通网页", source="builtin")]
+    urls = ["https://example.com/1", "https://example.com/2", "https://example.com/3"]
+
+    async def fake_crawl(url, *_a, **_k):
+        if url.endswith("/1"):
+            return CrawlResult(url=url, success=True, markdown="# 1")
+        if url.endswith("/2"):
+            return CrawlResult(
+                url=url, success=False, error="connection reset", error_kind="browser"
+            )
+        raise AssertionError("should not crawl after browser failure without stubbing remainder")
+
+    with patch("crawl4ai_mcp.crawler.crawl_page", new=AsyncMock(side_effect=fake_crawl)):
+        with patch("crawl4ai_mcp.crawler._pool.invalidate", new_callable=AsyncMock) as inv:
+            results, err = await crawl_many_pages(urls, strategies, cdp_url="http://cdp")
+    assert inv.await_count == 1
+    assert len(results) == 3
+    assert results[0].success is True
+    assert results[1].success is False
+    assert results[2].success is False
+    assert results[2].error
+    assert err == ""
+
+
+@pytest.mark.asyncio
+async def test_deep_crawl_pages_keeps_all_hits_on_browserish_page():
+    from types import SimpleNamespace
+
+    from crawl4ai_mcp.crawler import deep_crawl_pages
+
+    strategies = [
+        SiteStrategy(name="知乎", domains=("zhihu.com",), title_suffixes=(" - 知乎",), css_selector=".Post")
+    ]
+    items = [
+        SimpleNamespace(
+            url="https://www.zhihu.com/a",
+            success=True,
+            html="<p>x</p>",
+            markdown=SimpleNamespace(raw_markdown="# A - 知乎\n\nbody"),
+            metadata={"title": "A - 知乎", "depth": 0},
+            error_message=None,
+        ),
+        SimpleNamespace(
+            url="https://www.zhihu.com/b",
+            success=False,
+            html="",
+            markdown=None,
+            metadata={"depth": 1},
+            error_message="ERR_CONNECTION_RESET",
+        ),
+        SimpleNamespace(
+            url="https://www.zhihu.com/c",
+            success=True,
+            html="<p>y</p>",
+            markdown=SimpleNamespace(raw_markdown="# C - 知乎\n\nbody"),
+            metadata={"title": "C - 知乎", "depth": 1},
+            error_message=None,
+        ),
+    ]
+    crawler = SimpleNamespace(arun=AsyncMock(return_value=items))
+    with patch("crawl4ai_mcp.crawler.assert_cdp_ready", return_value="http://cdp"):
+        with patch("crawl4ai_mcp.crawler._pool.get", new_callable=AsyncMock, return_value=crawler):
+            with patch("crawl4ai_mcp.crawler._pool.invalidate", new_callable=AsyncMock) as inv:
+                hits, err = await deep_crawl_pages(
+                    "https://www.zhihu.com/a", strategies, strategy="bfs", max_depth=1, max_pages=5
+                )
+    assert inv.await_count == 1
+    assert err == ""
+    assert len(hits) == 3
+    assert hits[0][0].title == "A"
+    assert hits[1][0].success is False
+    assert hits[2][0].success is True
+
+
+def test_deep_run_config_uses_seed_strategy_selector():
+    from crawl4ai_mcp.crawler import build_deep_run_config
+    from crawl4ai_mcp.models import SiteStrategy
+
+    strategy = SiteStrategy(
+        name="微信",
+        css_selector="#js_content",
+        wait_for="css:#js_content",
+        excluded_selector=".qr",
+        js_snippets=["() => {}"],
+    )
+    cfg = build_deep_run_config(strategy, deep_strategy=object(), timeout_ms=1000)
+    assert cfg.css_selector == "#js_content"
+    assert cfg.wait_for == "css:#js_content"
+    assert cfg.excluded_selector == ".qr"

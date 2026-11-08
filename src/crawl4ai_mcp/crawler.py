@@ -347,9 +347,9 @@ def _meta_depth_score(meta: Mapping | None) -> tuple[int | None, float | None]:
     return depth, score
 
 
-def _map_crawl4ai_result(raw: object, strategy_name: str) -> CrawlResult:
+def _map_crawl4ai_result(raw: object, strategy: SiteStrategy) -> CrawlResult:
     url = str(getattr(raw, "url", "") or "")
-    out = CrawlResult(url=url, strategy_name=strategy_name)
+    out = CrawlResult(url=url, strategy_name=strategy.name)
     success = bool(getattr(raw, "success", False))
     if not success:
         message = getattr(raw, "error_message", None) or "抓取失败"
@@ -362,14 +362,38 @@ def _map_crawl4ai_result(raw: object, strategy_name: str) -> CrawlResult:
     if markdown_obj is not None:
         raw_md = getattr(markdown_obj, "raw_markdown", None)
         out.markdown = _dedupe_repeats(str(raw_md if raw_md is not None else markdown_obj))
-    out.title = _clean_title(_pick_meta(meta, "title", "og:title") or "", SiteStrategy(name=strategy_name))
+    out.title = _clean_title(_pick_meta(meta, "title", "og:title") or "", strategy)
     out.author = _pick_meta(meta, "author", "article:author")
     out.date = _pick_meta(meta, "article:published_time", "date", "pubdate")
     out.success = bool((out.markdown or "").strip())
     if not out.success:
-        out.error = f"页面加载成功但未提取到正文（策略：{strategy_name}）"
+        out.error = f"页面加载成功但未提取到正文（策略：{strategy.name}）"
         out.error_kind = "page"
     return out
+
+
+def build_deep_run_config(
+    seed_strategy: SiteStrategy,
+    *,
+    deep_strategy: object,
+    timeout_ms: int,
+    verbose: bool = False,
+) -> CrawlerRunConfig:
+    """Build CrawlerRunConfig for deep crawl using the seed URL's site strategy."""
+    return CrawlerRunConfig(
+        cache_mode=CacheMode.BYPASS,
+        markdown_generator=build_markdown_generator(),
+        css_selector=seed_strategy.css_selector,
+        excluded_selector=seed_strategy.excluded_selector,
+        excluded_tags=["script", "style", "noscript", "iframe", "nav", "footer"],
+        wait_for=seed_strategy.wait_for,
+        js_code=seed_strategy.js_snippets or None,
+        page_timeout=timeout_ms,
+        word_count_threshold=5,
+        verbose=verbose,
+        log_console=verbose,
+        deep_crawl_strategy=deep_strategy,
+    )
 
 
 async def _normalize_arun_results(raw: object) -> list:
@@ -410,14 +434,12 @@ async def deep_crawl_pages(
         return [], str(exc)
 
     resolved = assert_cdp_ready() if cdp_url is None else cdp_url
-    run_cfg = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
-        markdown_generator=build_markdown_generator(),
-        page_timeout=timeout_ms,
-        word_count_threshold=5,
+    seed_strategy = detect_strategy(strategies, url)
+    run_cfg = build_deep_run_config(
+        seed_strategy,
+        deep_strategy=deep_strategy,
+        timeout_ms=timeout_ms,
         verbose=verbose,
-        log_console=verbose,
-        deep_crawl_strategy=deep_strategy,
     )
     try:
         crawler = await _pool.get(resolved, verbose)
@@ -429,15 +451,17 @@ async def deep_crawl_pages(
         return [], _short_error(exc)
 
     hits: list[tuple[CrawlResult, int | None, float | None]] = []
+    saw_browser = False
     for item in items:
         item_url = str(getattr(item, "url", "") or url)
         site = detect_strategy(strategies, item_url)
-        mapped = _map_crawl4ai_result(item, site.name)
+        mapped = _map_crawl4ai_result(item, site)
         if mapped.error_kind == "browser":
-            await _pool.invalidate()
-            return hits, mapped.error or "CDP browser connection failed"
+            saw_browser = True
         d, s = _meta_depth_score(getattr(item, "metadata", None))
         hits.append((mapped, d, s))
+    if saw_browser:
+        await _pool.invalidate()
     if not hits:
         return [], "Deep crawl returned no pages"
     return hits, ""
@@ -517,7 +541,7 @@ async def crawl_many_pages(
 ) -> tuple[list[CrawlResult], str]:
     """Crawl an explicit URL list without deep-link discovery (order preserved)."""
     results: list[CrawlResult] = []
-    for item in urls:
+    for index, item in enumerate(urls):
         result = await crawl_page(
             item,
             strategies,
@@ -527,7 +551,18 @@ async def crawl_many_pages(
         )
         results.append(result)
         if result.error_kind == "browser":
-            return results, result.error or "CDP browser connection failed"
+            await _pool.invalidate()
+            skip_msg = result.error or "CDP browser connection failed"
+            for skipped in urls[index + 1 :]:
+                results.append(
+                    CrawlResult(
+                        url=skipped,
+                        success=False,
+                        error=f"skipped after CDP failure: {skip_msg}",
+                        error_kind="browser",
+                    )
+                )
+            return results, ""
     return results, ""
 
 
