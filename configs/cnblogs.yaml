@@ -1,0 +1,16 @@
+name: 博客园
+domains:
+  - cnblogs.com
+title_suffixes:
+  - " - 博客园"
+css_selector: "#cnblogs_post_body"
+css_selector_fallbacks:
+  - ".postBody"
+  - "article"
+excluded_selector: "script,style,#sideBar,#blog_news_kb,#blog-calendar,#leftcontent,#blog_post_info,.postDesc"
+wait_for: "css:#cnblogs_post_body, .postBody"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "#cb_post_title_url, h1"
+author_selector: "#profile_block a, .postDesc a"
+date_selector: "#post-date, .postDesc, time"

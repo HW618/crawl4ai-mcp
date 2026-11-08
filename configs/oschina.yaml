@@ -1,0 +1,13 @@
+name: 开源中国
+domains:
+  - oschina.net
+title_suffixes:
+  - " - OSCHINA"
+css_selector: "main"
+excluded_selector: "script,style,.related-article,.article-actions,.float-bar,.oschina-footer,aside,nav"
+wait_for: "css:main"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1.article-title, h1"
+author_selector: ".user-name, .author"
+date_selector: ".time, .publish-time, time"

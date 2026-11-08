@@ -1,0 +1,17 @@
+name: 掘金
+domains:
+  - juejin.cn
+  - juejin.im
+title_suffixes:
+  - " - 掘金"
+css_selector: ".markdown-body"
+css_selector_fallbacks:
+  - ".article-content"
+  - "article"
+excluded_selector: "script,style,.article-suspended-panel,.article-end,.juejin-footer,.sidebar,.article-catalog,.comment-box"
+wait_for: "css:.article-content, .markdown-body"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1.article-title, h1"
+author_selector: ".username, .author-name"
+date_selector: ".time, time, .publish-time"

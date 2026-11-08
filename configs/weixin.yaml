@@ -1,0 +1,16 @@
+name: 微信公众号
+domains:
+  - mp.weixin.qq.com
+  - weixin.qq.com
+title_suffixes:
+  - " - 微信公众平台"
+css_selector: "#js_content"
+css_selector_fallbacks:
+  - ".rich_media_content"
+excluded_selector: "script,style,.rich_media_tool,.qr_code_pc,.rich_media_area_extra"
+wait_for: "css:#js_content, .rich_media_content"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1.rich_media_title, h1"
+author_selector: ".profile_nickname, #js_name"
+date_selector: "#publish_time, em#publish_time"

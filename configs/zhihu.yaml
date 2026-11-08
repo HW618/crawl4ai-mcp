@@ -1,0 +1,18 @@
+name: 知乎
+domains:
+  - zhuanlan.zhihu.com
+  - zhihu.com
+title_suffixes:
+  - " - 知乎"
+css_selector: ".Post-RichTextContainer"
+css_selector_fallbacks:
+  - ".RichContent-inner"
+  - "article"
+excluded_selector: "script,style,.RichContent-collapsedText,.ContentItem-actions,.Reward,.FollowButton,.AdbannerBanner,.Sticky"
+wait_for: "css:.Post-RichTextContainer, .RichContent-inner"
+js_snippets:
+  - "snippet:zhihu_math"
+  - "snippet:lazy_images"
+title_selector: "h1.Post-Title, h1"
+author_selector: ".AuthorInfo-name, .UserLink-link"
+date_selector: ".ContentItem-time, .publish-time, time"
