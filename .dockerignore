@@ -1,0 +1,13 @@
+.venv/
+.superpowers/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+docs/
+tests/
+.env
+.env.*
+!.env.example

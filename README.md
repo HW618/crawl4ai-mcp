@@ -6,17 +6,40 @@ This repository is independent of the `skills` / `md-this-page` skill copy.
 
 ## Requirements
 
-- Python 3.11+
-- An external browser with remote debugging (`CDP_URL`), for example:
+- Python 3.11+ **or** Docker Compose
+- An external CDP browser (`CDP_URL`). Recommended stack: **[CloakBrowser](https://github.com/CloakHQ/cloakbrowser) `cloakserve`** (see Docker below). Local Chrome remote debugging also works.
+
+No bundled Chromium / headless fallback inside the MCP process.
+
+## Docker Compose (CloakBrowser + MCP)
+
+Uses the official CloakBrowser image in CDP server mode (`cloakserve`) and this repo’s MCP image. Aligns with [CloakBrowser Docker Compose](https://github.com/CloakHQ/cloakbrowser): license via `CLOAKBROWSER_LICENSE_KEY`, CDP on `127.0.0.1:9222`, healthcheck on `/json/version`.
 
 ```bash
-google-chrome --remote-debugging-port=9222
-export CDP_URL=http://127.0.0.1:9222
+cp .env.example .env
+# set CLOAKBROWSER_LICENSE_KEY (required; free key: https://cloakbrowser.dev/free)
+
+docker compose up -d --build
+docker compose logs -f mcp
 ```
 
-No bundled Chromium / headless fallback.
+- MCP: `http://127.0.0.1:8000/mcp` (Bearer key in logs / volume)
+- CDP (host only): `http://127.0.0.1:9222` — do not publish to the public internet
+- Inside Compose, MCP uses `CDP_URL=http://cloakbrowser:9222`
 
-## Install
+Show connection info from a one-off container (same data volume):
+
+```bash
+docker compose run --rm -e CRAWL4AI_MCP_DATA_DIR=/data mcp crawl4ai-mcp info
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+## Install (local Python)
 
 ```bash
 uv venv .venv
@@ -24,9 +47,12 @@ source .venv/bin/activate
 uv pip install -e '.[dev]'
 ```
 
-## Run the MCP server
+## Run the MCP server (local)
+
+Point `CDP_URL` at CloakBrowser or Chrome:
 
 ```bash
+# e.g. after: docker compose up -d cloakbrowser
 export CDP_URL=http://127.0.0.1:9222
 crawl4ai-mcp serve
 ```
@@ -86,7 +112,6 @@ Live CDP / public URL checks are optional and not required for CI.
 
 ## Non-goals (v1)
 
-- Docker / Compose images (env conventions only for now)
 - Web search or generic query tools beyond convert/summary/list
 - Changes to the `skills` repository
 

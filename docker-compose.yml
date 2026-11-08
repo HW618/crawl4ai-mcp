@@ -1,0 +1,49 @@
+# CloakBrowser CDP (official) + crawl4ai-mcp Streamable HTTP.
+# Docs: https://github.com/CloakHQ/cloakbrowser (Docker Compose / cloakserve)
+#
+#   export CLOAKBROWSER_LICENSE_KEY=cb_xxx   # required; free key via cloakbrowser.dev/free
+#   docker compose up -d --build
+#   docker compose logs -f mcp
+
+services:
+  cloakbrowser:
+    image: cloakhq/cloakbrowser
+    command: cloakserve
+    restart: unless-stopped
+    environment:
+      # Passed through from the host / .env (official Compose pattern)
+      - CLOAKBROWSER_LICENSE_KEY
+    ports:
+      # CDP is full browser control — bind localhost only (official security note)
+      - "127.0.0.1:9222:9222"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # First launch may download the Pro binary with the license key
+      start_period: 120s
+
+  mcp:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      cloakbrowser:
+        condition: service_healthy
+    environment:
+      CDP_URL: http://cloakbrowser:9222
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8000"
+      # Optional fixed key; otherwise auto-generated into /data
+      API_KEY: ${API_KEY:-}
+      CONFIG_DIR: ${CONFIG_DIR:-}
+      CRAWL4AI_MCP_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - mcp-data:/data
+      # Optional: mount custom site YAML (set CONFIG_DIR=/config in .env)
+      # - ./configs-user:/config:ro
+
+volumes:
+  mcp-data:
