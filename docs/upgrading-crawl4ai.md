@@ -22,7 +22,7 @@ Dependabot opens a weekly PR against `dev` that bumps the pin (dependency name `
    - `crawl4ai.deep_crawling` strategy constructors / scorers
    - Result shapes: `.markdown`, `.links`, `.metadata["depth"]` / `["score"]`
 2. **Adapt adapters** in the same PR if needed (`crawler.py`, `deep_crawl.py`, tools).
-3. **Required:** `pytest -q` green (also enforced by `.github/workflows/ci.yml`).
+3. **Required:** `pytest -q` green (also enforced by `.github/workflows/ci.yml`). Keep `docs/operations.md` Compatibility row in sync with the new pin (`tests/test_dependency_pins.py` checks this).
 4. **Recommended before merging to `dev`:**
    ```bash
    docker compose up -d --build

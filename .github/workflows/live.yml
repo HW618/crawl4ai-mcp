@@ -26,11 +26,15 @@ jobs:
       - name: Wait for MCP
         if: ${{ vars.LIVE_CDP_AVAILABLE == 'true' }}
         run: |
+          # Do not use curl -f under pipefail: unauthenticated /mcp returns 401 by design.
           for i in $(seq 1 60); do
-            if curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/mcp | grep -qE '401|405|406|200'; then
-              echo "MCP reachable"
-              exit 0
-            fi
+            code=$(curl -s -o /dev/null --max-time 5 -w "%{http_code}" http://127.0.0.1:8000/mcp || true)
+            case "$code" in
+              401|405|406|200)
+                echo "MCP reachable (http $code)"
+                exit 0
+                ;;
+            esac
             sleep 5
           done
           echo "MCP did not become reachable"
