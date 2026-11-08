@@ -1,0 +1,42 @@
+name: live
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Optional weekly probe; no-ops unless LIVE_CDP_AVAILABLE is true
+    - cron: "17 6 * * 1"
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip when live CDP is unavailable
+        if: ${{ vars.LIVE_CDP_AVAILABLE != 'true' }}
+        run: |
+          echo "LIVE_CDP_AVAILABLE is not true; skipping live verify (exit 0)."
+          exit 0
+
+      - uses: actions/checkout@v4
+        if: ${{ vars.LIVE_CDP_AVAILABLE == 'true' }}
+
+      - name: Compose up
+        if: ${{ vars.LIVE_CDP_AVAILABLE == 'true' }}
+        run: docker compose up -d --build
+
+      - name: Wait for MCP
+        if: ${{ vars.LIVE_CDP_AVAILABLE == 'true' }}
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/mcp | grep -qE '401|405|406|200'; then
+              echo "MCP reachable"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "MCP did not become reachable"
+          docker compose logs --tail 80
+          exit 1
+
+      - name: Integration verify
+        if: ${{ vars.LIVE_CDP_AVAILABLE == 'true' }}
+        run: python3 scripts/integration_verify.py
