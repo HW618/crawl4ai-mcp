@@ -21,7 +21,13 @@ from .credentials import (
 from .crawler import assert_cdp_ready
 from .models import SiteStrategy
 from .strategies import load_strategies
-from .tools import tool_convert_url, tool_extract_summary, tool_list_site_strategies
+from .tools import (
+    tool_convert_url,
+    tool_extract_summary,
+    tool_fetch_url,
+    tool_list_site_strategies,
+    tool_web_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +105,42 @@ def create_mcp(strategies: list[SiteStrategy], *, cdp_url: str | None = None) ->
     def list_site_strategies(filter: str | None = None) -> str:
         """List loaded site crawl/convert strategies."""
         return tool_list_site_strategies(strategies, filter=filter)
+
+    @mcp.tool()
+    async def fetch_url(
+        url: str,
+        prefetch: bool = False,
+        timeout_sec: int = 45,
+        max_html_chars: int = 50000,
+        max_links: int = 50,
+    ) -> str:
+        """Fetch page HTML and links via CDP (optional prefetch mode)."""
+        return await tool_fetch_url(
+            url,
+            strategies=strategies,
+            prefetch=prefetch,
+            timeout_sec=timeout_sec,
+            max_html_chars=max_html_chars,
+            max_links=max_links,
+            cdp_url=cdp_url,
+        )
+
+    @mcp.tool()
+    async def web_search(
+        query: str,
+        engine: str = "duckduckgo",
+        max_results: int = 8,
+        timeout_sec: int = 45,
+    ) -> str:
+        """Search the web via CDP SERP fetch (duckduckgo|bing|google)."""
+        return await tool_web_search(
+            query,
+            strategies=strategies,
+            engine=engine,
+            max_results=max_results,
+            timeout_sec=timeout_sec,
+            cdp_url=cdp_url,
+        )
 
     return mcp
 

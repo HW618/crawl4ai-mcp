@@ -83,6 +83,8 @@ Authorization: Bearer <api_key>
 | `convert_url` | URL → Markdown (`timeout_sec`, `max_chars`, image/link/metadata flags) |
 | `extract_summary` | URL → plain-text summary |
 | `list_site_strategies` | List builtin/user site configs |
+| `fetch_url` | URL → HTML + links (`prefetch`, `max_html_chars`, `max_links`) |
+| `web_search` | Query → organic results via CDP SERP (`engine`: duckduckgo\|bing\|google) |
 
 ## Site strategies
 
@@ -127,7 +129,7 @@ On this host with CloakBrowser `0.6.5`, a cold `example.com` convert is ~1.1 s; 
 
 ## Non-goals (v1)
 
-- Web search or generic query tools beyond convert/summary/list
+- Deep crawl / `arun_many` and Crawl4AI Cloud `/search` APIs
 - Changes to the `skills` repository
 - Shipping CloakBrowser `0.7+` (license key) as the default Compose image
 

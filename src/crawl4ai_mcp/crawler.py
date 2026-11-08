@@ -309,6 +309,89 @@ async def _crawl_once(
     return out
 
 
+def _normalize_links(raw: object) -> dict[str, list[dict[str, str]]]:
+    """Normalize crawl4ai links dict to {internal, external}[{href, text}]."""
+    out: dict[str, list[dict[str, str]]] = {"internal": [], "external": []}
+    if not isinstance(raw, Mapping):
+        return out
+    for kind in ("internal", "external"):
+        items = raw.get(kind) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            href = str(item.get("href") or item.get("url") or "").strip()
+            text = str(item.get("text") or item.get("title") or "").strip()
+            if href:
+                out[kind].append({"href": href, "text": text})
+    return out
+
+
+async def fetch_page(
+    url: str,
+    strategies: list[SiteStrategy],
+    *,
+    prefetch: bool = False,
+    timeout_ms: int = 45000,
+    verbose: bool = False,
+    cdp_url: str | None = None,
+) -> tuple[CrawlResult, dict[str, list[dict[str, str]]]]:
+    """Fetch HTML (+ optional links) via CDP without requiring markdown success."""
+    strategy = detect_strategy(strategies, url)
+    resolved = assert_cdp_ready() if cdp_url is None else cdp_url
+    empty_links: dict[str, list[dict[str, str]]] = {"internal": [], "external": []}
+    out = CrawlResult(url=url, strategy_name=strategy.name)
+
+    run_cfg = CrawlerRunConfig(
+        cache_mode=CacheMode.BYPASS,
+        markdown_generator=None if prefetch else build_markdown_generator(),
+        css_selector=None if prefetch else strategy.css_selector,
+        excluded_selector=None if prefetch else strategy.excluded_selector,
+        excluded_tags=["script", "style", "noscript", "iframe"],
+        wait_for=None if prefetch else strategy.wait_for,
+        js_code=None if prefetch else (strategy.js_snippets or None),
+        page_timeout=timeout_ms,
+        word_count_threshold=1,
+        verbose=verbose,
+        log_console=verbose,
+        prefetch=prefetch,
+        exclude_external_links=False,
+        exclude_internal_links=False,
+    )
+    try:
+        crawler = await _pool.get(cdp_url=resolved, verbose=verbose)
+        result = await crawler.arun(url=url, config=run_cfg)
+    except Exception as exc:
+        out.error = _short_error(exc)
+        out.error_kind = "browser" if _is_browser_error(exc) else "page"
+        if out.error_kind == "browser":
+            await _pool.invalidate()
+        return out, empty_links
+
+    if not result.success:
+        message = result.error_message or "抓取失败"
+        out.error = _short_error(message)
+        out.error_kind = "browser" if _is_browser_error(message) else "page"
+        if out.error_kind == "browser":
+            await _pool.invalidate()
+        return out, empty_links
+
+    meta = dict(result.metadata or {})
+    out.html = result.html or ""
+    if result.markdown:
+        out.markdown = _dedupe_repeats(str(result.markdown.raw_markdown))
+    out.title = _clean_title(_pick_meta(meta, "title", "og:title") or "", strategy)
+    out.author = _pick_meta(meta, "author", "article:author")
+    out.date = _pick_meta(meta, "article:published_time", "date", "pubdate")
+    out.success = bool(out.html.strip())
+    if not out.success:
+        out.error = f"页面加载成功但未获取到 HTML（策略：{strategy.name}）"
+        out.error_kind = "page"
+        return out, empty_links
+    return out, _normalize_links(result.links)
+
+
 async def crawl_page(
     url: str,
     strategies: list[SiteStrategy],
