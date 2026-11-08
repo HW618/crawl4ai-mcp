@@ -507,6 +507,30 @@ async def fetch_page(
     return out, _normalize_links(result.links)
 
 
+async def crawl_many_pages(
+    urls: list[str],
+    strategies: list[SiteStrategy],
+    *,
+    timeout_ms: int = 45000,
+    verbose: bool = False,
+    cdp_url: str | None = None,
+) -> tuple[list[CrawlResult], str]:
+    """Crawl an explicit URL list without deep-link discovery (order preserved)."""
+    results: list[CrawlResult] = []
+    for item in urls:
+        result = await crawl_page(
+            item,
+            strategies,
+            timeout_ms=timeout_ms,
+            verbose=verbose,
+            cdp_url=cdp_url,
+        )
+        results.append(result)
+        if result.error_kind == "browser":
+            return results, result.error or "CDP browser connection failed"
+    return results, ""
+
+
 async def crawl_page(
     url: str,
     strategies: list[SiteStrategy],

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from crawl4ai_mcp.models import CrawlResult, SiteStrategy
-from crawl4ai_mcp.tools import tool_deep_crawl
+from crawl4ai_mcp.tools import tool_crawl_many, tool_deep_crawl
 
 
 @pytest.mark.asyncio
@@ -56,3 +56,36 @@ async def test_deep_crawl_hard_error():
         data = json.loads(await tool_deep_crawl("https://example.com/", strategies=strategies))
     assert data["pages"] == []
     assert "CDP" in data["error"] or "failed" in data["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_crawl_many_rejects_empty_and_oversized():
+    strategies = [SiteStrategy(name="普通网页", source="builtin")]
+    empty = json.loads(await tool_crawl_many([], strategies=strategies))
+    assert empty["pages"] == [] and empty["error"]
+    big = json.loads(
+        await tool_crawl_many([f"https://example.com/{i}" for i in range(101)], strategies=strategies)
+    )
+    assert big["pages"] == [] and ("100" in big["error"] or "max" in big["error"].lower())
+
+
+@pytest.mark.asyncio
+async def test_crawl_many_preserves_order_and_failures():
+    strategies = [SiteStrategy(name="普通网页", source="builtin")]
+    results = [
+        CrawlResult(url="https://example.com/1", success=True, markdown="# 1"),
+        CrawlResult(url="https://example.com/2", success=False, error="boom"),
+    ]
+    with patch(
+        "crawl4ai_mcp.tools.crawl_many_pages",
+        new_callable=AsyncMock,
+        return_value=(results, ""),
+    ):
+        data = json.loads(
+            await tool_crawl_many(
+                ["https://example.com/1", "https://example.com/2"], strategies=strategies
+            )
+        )
+    assert data["stats"] == {"crawled": 2, "succeeded": 1, "failed": 1}
+    assert data["pages"][0]["success"] is True
+    assert data["pages"][1]["success"] is False

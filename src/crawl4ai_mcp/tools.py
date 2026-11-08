@@ -3,8 +3,13 @@ from __future__ import annotations
 import json
 
 from .converter import convert_to_markdown, extract_summary
-from .crawler import crawl_page, deep_crawl_pages, fetch_page
-from .deep_crawl import SUPPORTED_DEEP_STRATEGIES, clamp_max_depth, clamp_max_pages
+from .crawler import crawl_many_pages, crawl_page, deep_crawl_pages, fetch_page
+from .deep_crawl import (
+    MAX_BATCH_URLS,
+    SUPPORTED_DEEP_STRATEGIES,
+    clamp_max_depth,
+    clamp_max_pages,
+)
 from .models import CrawlResult, SiteStrategy
 from .search import SUPPORTED_ENGINES, build_serp_url, parse_serp_html
 
@@ -183,6 +188,35 @@ def _page_row(
     if score is not None:
         row["score"] = score
     return row
+
+
+async def tool_crawl_many(
+    urls: list[str],
+    *,
+    strategies: list[SiteStrategy],
+    timeout_sec: int = 45,
+    max_chars: int | None = None,
+    cdp_url: str | None = None,
+) -> str:
+    items = list(urls or [])
+    if not items:
+        return _pages_payload([], error="urls is required and must be non-empty")
+    if len(items) > MAX_BATCH_URLS:
+        return _pages_payload([], error=f"Too many urls: {len(items)} (max {MAX_BATCH_URLS})")
+    for item in items:
+        if err := _validate_url(item):
+            return _pages_payload([], error=err)
+
+    results, hard_error = await crawl_many_pages(
+        items,
+        strategies,
+        timeout_ms=timeout_sec * 1000,
+        cdp_url=cdp_url,
+    )
+    if hard_error and not results:
+        return _pages_payload([], error=hard_error)
+    rows = [_page_row(result, max_chars=max_chars) for result in results]
+    return _pages_payload(rows, error=hard_error)
 
 
 async def tool_deep_crawl(
