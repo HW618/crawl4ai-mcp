@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crawl4ai-mcp"
+version = "0.1.0"
+description = "Remote Streamable HTTP MCP server for URL→Markdown via external CDP"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0",
+  "beautifulsoup4>=4.12.0",
+  "lxml>=4.9.0",
+  "crawl4ai>=0.9.0",
+  "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+crawl4ai-mcp = "crawl4ai_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
