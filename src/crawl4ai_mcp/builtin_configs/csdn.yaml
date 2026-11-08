@@ -1,0 +1,17 @@
+name: CSDN
+domains:
+  - blog.csdn.net
+  - csdn.net
+title_suffixes:
+  - " - CSDN博客"
+  - " - CSDN"
+css_selector: "#content_views"
+css_selector_fallbacks:
+  - "article"
+excluded_selector: "script,style,.toolbar,.recommend-box,.template-box,.blog-footer,.aside-box,.csdn-side-toolbar,.hide-article-box,.article-bar-top,#toolBarBox"
+wait_for: "css:#content_views, article"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1.title-article, h1"
+author_selector: ".profile-intro-name, .follow-nickName"
+date_selector: ".time, .article-time, .publish-time"

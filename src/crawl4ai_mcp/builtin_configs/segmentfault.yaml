@@ -1,0 +1,16 @@
+name: SegmentFault
+domains:
+  - segmentfault.com
+title_suffixes:
+  - " - SegmentFault"
+css_selector: ".article-content"
+css_selector_fallbacks:
+  - ".question-content"
+  - "article"
+excluded_selector: "script,style,.side,.related-questions,.ad-wrap,.post-actions,.sf-footer"
+wait_for: "css:.article-content, .question-content"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1, .question-title"
+author_selector: ".user-name, .author"
+date_selector: ".time, time"

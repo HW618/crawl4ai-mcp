@@ -1,0 +1,17 @@
+name: Bilibili专栏
+domains:
+  - bilibili.com
+title_suffixes:
+  - " - 哔哩哔哩"
+css_selector: ".article-content"
+css_selector_fallbacks:
+  - ".opus-module-content"
+  - "#read-article-holder"
+  - "article"
+excluded_selector: "script,style,.fixed-top-bar,.article-bar,.recommend-list,.comment-box,.up-info-holder"
+wait_for: "css:.article-content, .opus-module-content, #read-article-holder"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1.title, .opus-module-title, .read-title, h1"
+author_selector: ".up-name, .author-name"
+date_selector: ".publish-time, time"

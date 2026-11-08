@@ -1,0 +1,13 @@
+name: 简书
+domains:
+  - jianshu.com
+title_suffixes:
+  - " - 简书"
+css_selector: "article"
+excluded_selector: "script,style,.note-list,.user-follow,.support-author,.show-foot,.jianshu-footer"
+wait_for: "css:article"
+js_snippets:
+  - "snippet:lazy_images"
+title_selector: "h1.title, h1"
+author_selector: ".name, .author-name"
+date_selector: ".time, .publish-time, time"

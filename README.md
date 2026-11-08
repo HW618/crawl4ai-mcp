@@ -13,12 +13,9 @@ No bundled Chromium / headless fallback inside the MCP process.
 
 ## Docker Compose (CloakBrowser + MCP)
 
-Uses the official CloakBrowser image in CDP server mode (`cloakserve`) and this repo’s MCP image. Aligns with [CloakBrowser Docker Compose](https://github.com/CloakHQ/cloakbrowser): license via `CLOAKBROWSER_LICENSE_KEY`, CDP on `127.0.0.1:9222`, healthcheck on `/json/version`.
+Uses CloakBrowser in CDP server mode (`cloakserve`) and this repo’s MCP image. The Compose file **pins `cloakhq/cloakbrowser:0.6.5`** — the last **keyless** release (old v146 build). From `0.7+` every launch needs a license key; see [CloakBrowser FAQ](https://github.com/CloakHQ/cloakbrowser). CDP is published on `127.0.0.1:9222` with a `/json/version` healthcheck.
 
 ```bash
-cp .env.example .env
-# set CLOAKBROWSER_LICENSE_KEY (required; free key: https://cloakbrowser.dev/free)
-
 docker compose up -d --build
 docker compose logs -f mcp
 ```
@@ -26,6 +23,7 @@ docker compose logs -f mcp
 - MCP: `http://127.0.0.1:8000/mcp` (Bearer key in logs / volume)
 - CDP (host only): `http://127.0.0.1:9222` — do not publish to the public internet
 - Inside Compose, MCP uses `CDP_URL=http://cloakbrowser:9222`
+- No `CLOAKBROWSER_LICENSE_KEY` required for the pinned `0.6.5` image
 
 Show connection info from a one-off container (same data volume):
 

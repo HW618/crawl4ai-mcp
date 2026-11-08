@@ -1,0 +1,18 @@
+lazy_images: |
+  document.querySelectorAll('img').forEach(img => {
+      const real = img.getAttribute('data-src') || img.getAttribute('data-original')
+                || img.getAttribute('data-lazy-src') || img.getAttribute('data-actualsrc');
+      if (real) {
+          img.src = real.startsWith('//') ? 'https:' + real : real;
+      }
+  });
+
+zhihu_math: |
+  document.querySelectorAll('img[data-eeimg], img.equation').forEach(img => {
+      const alt = img.getAttribute('alt') || img.getAttribute('data-eeimg');
+      if (alt) {
+          const node = document.createTextNode(img.getAttribute('data-eeimg-status') === 'block'
+              ? '\n$$' + alt + '$$\n' : '$' + alt + '$');
+          img.replaceWith(node);
+      }
+  });

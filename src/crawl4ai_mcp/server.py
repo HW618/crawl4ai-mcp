@@ -25,8 +25,19 @@ from .tools import tool_convert_url, tool_extract_summary, tool_list_site_strate
 
 logger = logging.getLogger(__name__)
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIGS = PACKAGE_ROOT / "configs"
+
+def builtin_configs_dir() -> Path:
+    """Resolve builtin strategy YAML for editable installs and packaged wheels."""
+    env = os.environ.get("BUILTIN_CONFIGS_DIR", "").strip()
+    if env:
+        return Path(env)
+    repo_configs = Path(__file__).resolve().parents[2] / "configs"
+    if (repo_configs / "_snippets.yaml").is_file():
+        return repo_configs
+    packaged = Path(__file__).resolve().parent / "builtin_configs"
+    if (packaged / "_snippets.yaml").is_file():
+        return packaged
+    return repo_configs
 
 
 class BearerAuthMiddleware:
@@ -148,7 +159,7 @@ def serve() -> None:
     data_dir = data_dir_from_env()
     api_key = resolve_api_key(os.environ, data_dir)
     user_dir = os.environ.get("CONFIG_DIR", "").strip() or None
-    strategies = load_strategies(DEFAULT_CONFIGS, Path(user_dir) if user_dir else None)
+    strategies = load_strategies(builtin_configs_dir(), Path(user_dir) if user_dir else None)
     advertise_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     conn_path = write_connection_json(
         data_dir, host=advertise_host, port=port, path=path, api_key=api_key
