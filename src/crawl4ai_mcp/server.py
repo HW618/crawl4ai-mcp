@@ -23,6 +23,8 @@ from .models import SiteStrategy
 from .strategies import load_strategies
 from .tools import (
     tool_convert_url,
+    tool_crawl_many,
+    tool_deep_crawl,
     tool_extract_summary,
     tool_fetch_url,
     tool_list_site_strategies,
@@ -139,6 +141,46 @@ def create_mcp(strategies: list[SiteStrategy], *, cdp_url: str | None = None) ->
             engine=engine,
             max_results=max_results,
             timeout_sec=timeout_sec,
+            cdp_url=cdp_url,
+        )
+
+    @mcp.tool()
+    async def deep_crawl(
+        url: str,
+        strategy: str = "bfs",
+        max_depth: int = 2,
+        max_pages: int = 50,
+        include_external: bool = False,
+        keywords: list[str] | None = None,
+        timeout_sec: int = 45,
+        max_chars: int | None = None,
+    ) -> str:
+        """Deep-crawl from a seed URL (bfs|dfs|best_first) and return Markdown pages."""
+        return await tool_deep_crawl(
+            url,
+            strategies=strategies,
+            strategy=strategy,
+            max_depth=max_depth,
+            max_pages=max_pages,
+            include_external=include_external,
+            keywords=keywords,
+            timeout_sec=timeout_sec,
+            max_chars=max_chars,
+            cdp_url=cdp_url,
+        )
+
+    @mcp.tool()
+    async def crawl_many(
+        urls: list[str],
+        timeout_sec: int = 45,
+        max_chars: int | None = None,
+    ) -> str:
+        """Crawl an explicit list of URLs (no link discovery) and return Markdown pages."""
+        return await tool_crawl_many(
+            urls,
+            strategies=strategies,
+            timeout_sec=timeout_sec,
+            max_chars=max_chars,
             cdp_url=cdp_url,
         )
 

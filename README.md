@@ -85,6 +85,8 @@ Authorization: Bearer <api_key>
 | `list_site_strategies` | List builtin/user site configs |
 | `fetch_url` | URL → HTML + links (`prefetch`, `max_html_chars`, `max_links`) |
 | `web_search` | Query → organic results via CDP SERP (`engine`: duckduckgo\|bing\|google) |
+| `deep_crawl` | Seed URL → multi-page Markdown (`bfs`\|`dfs`\|`best_first`, depth/pages caps) |
+| `crawl_many` | URL list → Markdown pages (no link discovery, max 100) |
 
 ## Site strategies
 
@@ -129,7 +131,7 @@ On this host with CloakBrowser `0.6.5`, a cold `example.com` convert is ~1.1 s; 
 
 ## Non-goals (v1)
 
-- Deep crawl / `arun_many` and Crawl4AI Cloud `/search` APIs
+- Crawl4AI Cloud `/search` APIs; async job/poll API for long crawls
 - Changes to the `skills` repository
 - Shipping CloakBrowser `0.7+` (license key) as the default Compose image
 
