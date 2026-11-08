@@ -70,6 +70,7 @@ def create_mcp(strategies: list[SiteStrategy], *, cdp_url: str | None = None) ->
         include_images: bool = True,
         include_links: bool = True,
         timeout_sec: int = 45,
+        max_chars: int | None = None,
     ) -> str:
         """Convert a web page URL to Markdown using site strategies and CDP."""
         return await tool_convert_url(
@@ -79,6 +80,7 @@ def create_mcp(strategies: list[SiteStrategy], *, cdp_url: str | None = None) ->
             include_images=include_images,
             include_links=include_links,
             timeout_sec=timeout_sec,
+            max_chars=max_chars,
             cdp_url=cdp_url,
         )
 

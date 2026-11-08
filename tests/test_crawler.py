@@ -8,8 +8,15 @@ from crawl4ai_mcp.crawler import (
     crawl_page,
     is_valid_cdp,
     require_cdp_url,
+    reset_crawler_runtime,
 )
-from crawl4ai_mcp.models import SiteStrategy
+
+
+@pytest.fixture(autouse=True)
+async def _reset_runtime():
+    await reset_crawler_runtime()
+    yield
+    await reset_crawler_runtime()
 
 
 def test_require_cdp_url_missing():
@@ -40,17 +47,19 @@ def test_is_valid_cdp_accepts_version_payload():
 
 @pytest.mark.asyncio
 async def test_crawl_page_does_not_fallback():
+    from crawl4ai_mcp.models import SiteStrategy
+
     strategies = [SiteStrategy(name="普通网页", domains=(), source="builtin")]
 
     class Boom:
         def __init__(self, *args, **kwargs):
             pass
 
-        async def __aenter__(self):
+        async def start(self):
             raise ConnectionError("CDP connect failed")
 
-        async def __aexit__(self, *args):
-            return False
+        async def close(self):
+            return None
 
     with patch("crawl4ai_mcp.crawler.AsyncWebCrawler", Boom):
         with patch("crawl4ai_mcp.crawler.assert_cdp_ready", return_value="http://127.0.0.1:9222"):
@@ -60,4 +69,5 @@ async def test_crawl_page_does_not_fallback():
                 cdp_url="http://127.0.0.1:9222",
             )
     assert result.success is False
+    assert result.error_kind == "browser"
     assert "cdp" in result.error.lower() or "connect" in result.error.lower()

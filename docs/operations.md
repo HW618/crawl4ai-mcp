@@ -43,25 +43,26 @@ Unit tests (no browser):
 
 ## Observed timings (this host, CloakBrowser 0.6.5)
 
-Recorded by `scripts/integration_verify.py` on 2026-11-08:
+After the performance work (shared CDP crawler + TTL cache + browser-error short-circuit), `scripts/integration_verify.py` on 2026-11-08:
 
 | Case | Latency |
 | --- | --- |
-| MCP initialize / list strategies | ~2 ms |
-| `convert_url` https://example.com/ (1st / 2nd) | ~1000 ms / ~950 ms |
-| `extract_summary` example.com | ~940 ms |
-| `convert_url` Wikipedia “Web scraping” | ~2100 ms (body truncated at 50k chars) |
-| `convert_url` IANA reserved domains | ~2100 ms |
-| `convert_url` juejin.cn (strategy 掘金) | ~30 s then crawl error from this network |
+| MCP initialize / list strategies | ~3–4 ms |
+| `convert_url` https://example.com/ (1st / 2nd) | ~1137 ms / **~3 ms** (cache hit) |
+| `extract_summary` example.com (after convert) | **~3 ms** (same crawl cache) |
+| `convert_url` Wikipedia “Web scraping” | ~1315 ms (body still truncated at default 50k; pass `max_chars`) |
+| `convert_url` IANA reserved domains | ~438 ms |
+| `convert_url` juejin.cn (strategy 掘金) | may timeout from this network |
 
-## Performance headroom
+Baseline before these changes: example.com 1st/2nd were both ~1 s (no session reuse, no crawl cache).
 
-Highest-impact improvements (not implemented yet):
+## Performance features
 
-1. **Reuse CDP / `AsyncWebCrawler` across tool calls** — today each crawl opens and closes a crawler context (`async with AsyncWebCrawler(...)`), so every request pays CDP attach cost (~similar 1st vs 2nd example.com times). A process-wide pool or long-lived connection would cut simple-page latency.
-2. **Smarter selector fallbacks** — strategies with several `css_selector_fallbacks` can run multiple full navigations; short-circuit on browser errors and/or probe selectors without full reload.
-3. **Optional HTTP cache** — `CacheMode.BYPASS` always; a short TTL cache helps repeated URLs in agent loops.
-4. **Configurable `max_chars` on the MCP tool** — Wikipedia hits the 50k converter cap; exposing `max_chars` avoids wasted transfer when clients want less.
-5. **Parallelism limits** — CloakBrowser 0.6.5 / free tiers are session-limited; document concurrency expectations before adding a request queue.
+1. **Shared CDP crawler** — process-wide `CrawlerPool` keeps one started `AsyncWebCrawler` per `CDP_URL`; browser-level failures invalidate the pool so the next call reconnects.
+2. **Selector fallback short-circuit** — if a crawl fails with `error_kind=browser`, remaining `css_selector_fallbacks` are skipped.
+3. **TTL crawl cache** — successful `CrawlResult`s cached in-process (`CRAWL_CACHE_TTL_SEC`, default `60`; `0` disables). Repeated agent converts/summaries of the same URL reuse the cached crawl.
+4. **`max_chars` on `convert_url`** — optional MCP tool argument; omit to keep the converter default (50k).
 
-Lower priority: suppress Crawl4AI cloud banner via `CRAWL4AI_NO_CLOUD_NOTICE=1` (already set in Compose).
+Still optional later: request queue / concurrency caps for CloakBrowser session limits; richer selector probing without full re-navigation.
+
+Compose already sets `CRAWL4AI_NO_CLOUD_NOTICE=1` and `CRAWL_CACHE_TTL_SEC`.

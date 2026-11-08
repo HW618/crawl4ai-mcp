@@ -80,7 +80,7 @@ Authorization: Bearer <api_key>
 
 | Tool | Purpose |
 | --- | --- |
-| `convert_url` | URL → Markdown |
+| `convert_url` | URL → Markdown (`timeout_sec`, `max_chars`, image/link/metadata flags) |
 | `extract_summary` | URL → plain-text summary |
 | `list_site_strategies` | List builtin/user site configs |
 
@@ -101,6 +101,7 @@ Example fields: `name`, `domains`, `css_selector`, `css_selector_fallbacks`, `ex
 | `MCP_HOST` / `MCP_PORT` | Bind address |
 | `CRAWL4AI_MCP_DATA_DIR` | Override `~/.crawl4ai-mcp` (Compose uses `/data`) |
 | `CRAWL4AI_NO_CLOUD_NOTICE` | Set `1` to hide Crawl4AI pip banner (Compose sets this) |
+| `CRAWL_CACHE_TTL_SEC` | In-process successful-crawl cache TTL (default `60`; `0` disables) |
 
 ## Tests
 
@@ -120,7 +121,9 @@ Expected: CDP healthy, auth 401s, nine builtin strategies, `example.com` / Wikip
 
 ## Performance (summary)
 
-On this host with CloakBrowser `0.6.5`, simple pages convert in ~1 s; larger pages ~2 s. Second `example.com` call is not much faster than the first, which points to **per-request CDP/crawler setup** as the main headroom. Highest-value follow-ups: reuse `AsyncWebCrawler`/CDP sessions, avoid full re-navigations on selector fallbacks, optional URL cache, and expose `max_chars` on `convert_url`. Details in [docs/operations.md](docs/operations.md).
+Implemented: shared CDP `AsyncWebCrawler` pool, browser-error short-circuit on selector fallbacks, TTL crawl cache (`CRAWL_CACHE_TTL_SEC`), and optional `max_chars` on `convert_url`.
+
+On this host with CloakBrowser `0.6.5`, a cold `example.com` convert is ~1.1 s; the **second** convert (and a following summary of the same URL) is ~3 ms via cache. See [docs/operations.md](docs/operations.md).
 
 ## Non-goals (v1)
 

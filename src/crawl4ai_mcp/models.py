@@ -36,4 +36,5 @@ class CrawlResult:
     html: str = ""
     success: bool = False
     error: str = ""
+    error_kind: str = ""  # "" | "page" | "browser"
     strategy_name: str = ""

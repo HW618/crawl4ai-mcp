@@ -34,6 +34,31 @@ async def test_convert_reports_cdp_failure():
     assert "cdp" in text.lower() or "connect" in text.lower()
 
 
+@pytest.mark.asyncio
+async def test_convert_passes_max_chars():
+    strategies = [SiteStrategy(name="普通网页", source="builtin")]
+    long_md = "word " * 5000
+    with patch(
+        "crawl4ai_mcp.tools.crawl_page",
+        new_callable=AsyncMock,
+        return_value=CrawlResult(
+            url="https://example.com/",
+            success=True,
+            title="T",
+            markdown=long_md,
+            strategy_name="普通网页",
+        ),
+    ):
+        text = await tool_convert_url(
+            "https://example.com/",
+            strategies=strategies,
+            include_metadata=False,
+            max_chars=200,
+        )
+    assert "内容已截断" in text
+    assert len(text) < len(long_md)
+
+
 def test_list_strategies():
     strategies = [
         SiteStrategy(name="A", domains=("a.com",), source="builtin"),

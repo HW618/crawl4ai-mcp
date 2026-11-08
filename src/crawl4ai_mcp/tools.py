@@ -21,6 +21,7 @@ async def tool_convert_url(
     include_images: bool = True,
     include_links: bool = True,
     timeout_sec: int = 45,
+    max_chars: int | None = None,
     cdp_url: str | None = None,
 ) -> str:
     if err := _validate_url(url):
@@ -31,12 +32,14 @@ async def tool_convert_url(
         timeout_ms=timeout_sec * 1000,
         cdp_url=cdp_url,
     )
-    text = convert_to_markdown(
-        result,
+    convert_kwargs = dict(
         include_metadata=include_metadata,
         include_images=include_images,
         include_links=include_links,
     )
+    if max_chars is not None:
+        convert_kwargs["max_chars"] = max_chars
+    text = convert_to_markdown(result, **convert_kwargs)
     if "strategy:" not in text:
         text = text.rstrip() + f"\n\nstrategy: {result.strategy_name or '普通网页'}\n"
     return text

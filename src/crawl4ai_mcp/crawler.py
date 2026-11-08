@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ from bs4 import BeautifulSoup
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
+from .cache import TtlCache
 from .models import CrawlResult, SiteStrategy
 from .strategies import detect_strategy
 
@@ -20,10 +22,85 @@ logger = logging.getLogger(__name__)
 _META_DIV_CLASS = "mtp-meta"
 MIN_ACCEPT_CHARS = 400
 MARKDOWN_OPTIONS = {"bypass_tables": True}
+_BROWSER_ERROR_KEYWORDS = (
+    "cdp",
+    "connect",
+    "connection",
+    "target closed",
+    "targetclosed",
+    "browser",
+    "playwright",
+    "executable doesn't exist",
+    "browsertype",
+)
 
 
 class CdpConfigError(RuntimeError):
     """Raised when CDP_URL is missing or not a compliant CDP endpoint."""
+
+
+class CrawlerPool:
+    """Reuse one started AsyncWebCrawler per CDP endpoint."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._crawler: AsyncWebCrawler | None = None
+        self._cdp_url: str | None = None
+        self._verbose = False
+
+    async def get(self, cdp_url: str, verbose: bool = False) -> AsyncWebCrawler:
+        async with self._lock:
+            if self._crawler is not None and self._cdp_url == cdp_url and self._verbose == verbose:
+                return self._crawler
+            await self._close_unlocked()
+            crawler = AsyncWebCrawler(config=build_browser_config(cdp_url, verbose))
+            await crawler.start()
+            self._crawler = crawler
+            self._cdp_url = cdp_url
+            self._verbose = verbose
+            logger.info("Started shared CDP crawler for %s", cdp_url)
+            return crawler
+
+    async def invalidate(self) -> None:
+        async with self._lock:
+            await self._close_unlocked()
+
+    async def close(self) -> None:
+        async with self._lock:
+            await self._close_unlocked()
+
+    async def _close_unlocked(self) -> None:
+        if self._crawler is None:
+            return
+        try:
+            await self._crawler.close()
+        except Exception as exc:
+            logger.debug("Error closing shared crawler: %s", exc)
+        self._crawler = None
+        self._cdp_url = None
+
+
+_pool = CrawlerPool()
+_cache: TtlCache[CrawlResult] = TtlCache(ttl_sec=60.0)
+
+
+def _cache_ttl_from_env() -> float:
+    raw = os.environ.get("CRAWL_CACHE_TTL_SEC", "60").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 60.0
+
+
+def _refresh_cache_from_env() -> None:
+    global _cache
+    _cache = TtlCache(ttl_sec=_cache_ttl_from_env())
+
+
+async def reset_crawler_runtime() -> None:
+    """Test helper: drop shared crawler + cache."""
+    await _pool.close()
+    _refresh_cache_from_env()
 
 
 def require_cdp_url(env: Mapping[str, str] | None = None) -> str:
@@ -69,10 +146,15 @@ def build_browser_config(cdp_url: str, verbose: bool = False) -> BrowserConfig:
     )
 
 
+def _is_browser_error(err: object) -> bool:
+    text = str(err).lower()
+    return any(k in text for k in _BROWSER_ERROR_KEYWORDS)
+
+
 def _short_error(err: object) -> str:
     text = " ".join(str(err).split())
     low = text.lower()
-    if "cdp" in low or "connect" in low or "connection" in low:
+    if _is_browser_error(err):
         return f"CDP browser connection failed: {text[:300]}"
     if "Wait condition failed" in text or "timeout" in low:
         return (
@@ -158,6 +240,10 @@ def _content_selectors(strategy: SiteStrategy) -> list[str | None]:
     return [strategy.css_selector, *strategy.css_selector_fallbacks]
 
 
+def _cache_key(url: str, strategy_name: str) -> str:
+    return f"{strategy_name}\n{url}"
+
+
 async def _crawl_once(
     url: str,
     strategy: SiteStrategy,
@@ -186,14 +272,21 @@ async def _crawl_once(
     )
     out = CrawlResult(url=url, strategy_name=strategy.name)
     try:
-        async with AsyncWebCrawler(config=build_browser_config(cdp_url, verbose)) as crawler:
-            result = await crawler.arun(url=url, config=run_cfg)
+        crawler = await _pool.get(cdp_url, verbose)
+        result = await crawler.arun(url=url, config=run_cfg)
     except Exception as exc:
         out.error = _short_error(exc)
+        out.error_kind = "browser" if _is_browser_error(exc) else "page"
+        if out.error_kind == "browser":
+            await _pool.invalidate()
         return out
 
     if not result.success:
-        out.error = _short_error(result.error_message or "抓取失败")
+        message = result.error_message or "抓取失败"
+        out.error = _short_error(message)
+        out.error_kind = "browser" if _is_browser_error(message) else "page"
+        if out.error_kind == "browser":
+            await _pool.invalidate()
         return out
 
     meta = dict(result.metadata or {})
@@ -212,6 +305,7 @@ async def _crawl_once(
     out.success = bool((out.markdown or "").strip())
     if not out.success:
         out.error = f"页面加载成功但未提取到正文（策略：{strategy.name}）"
+        out.error_kind = "page"
     return out
 
 
@@ -222,18 +316,36 @@ async def crawl_page(
     timeout_ms: int = 45000,
     verbose: bool = False,
     cdp_url: str | None = None,
+    use_cache: bool = True,
 ) -> CrawlResult:
     """Crawl one URL using only an external CDP browser."""
     strategy = detect_strategy(strategies, url)
-    # Explicit cdp_url skips the live probe (tests / pre-validated callers).
     resolved = assert_cdp_ready() if cdp_url is None else cdp_url
+
+    # Keep cache TTL in sync with env (tests may change CRAWL_CACHE_TTL_SEC).
+    if _cache.ttl_sec != _cache_ttl_from_env():
+        _refresh_cache_from_env()
+
+    key = _cache_key(url, strategy.name)
+    if use_cache:
+        cached = _cache.get(key)
+        if cached is not None:
+            logger.debug("crawl cache hit for %s", url)
+            return cached
 
     selectors = _content_selectors(strategy)
     best: CrawlResult | None = None
     for sel in selectors:
         result = await _crawl_once(url, strategy, resolved, timeout_ms, verbose, sel)
+        if result.error_kind == "browser":
+            return result
         if result.success and len(result.markdown) >= MIN_ACCEPT_CHARS:
+            if use_cache:
+                _cache.set(key, result)
             return result
         if best is None or len(result.markdown or "") > len(best.markdown or ""):
             best = result
-    return best or CrawlResult(url=url, strategy_name=strategy.name, error="crawl failed")
+    final = best or CrawlResult(url=url, strategy_name=strategy.name, error="crawl failed", error_kind="page")
+    if use_cache and final.success:
+        _cache.set(key, final)
+    return final
