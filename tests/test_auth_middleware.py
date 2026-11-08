@@ -39,3 +39,30 @@ def test_bearer_key_not_401():
 def test_build_asgi_app_constructs():
     app = build_asgi_app(api_key="secret", strategies=[])
     assert app is not None
+
+
+def test_build_asgi_app_initialize_not_500():
+    app = build_asgi_app(api_key="secret", strategies=[])
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0"},
+        },
+    }
+    # Context manager starts MCP streamable HTTP lifespan (session manager).
+    with TestClient(app) as client:
+        resp = client.post(
+            "/mcp",
+            json=payload,
+            headers={
+                "Authorization": "Bearer secret",
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+        )
+    assert resp.status_code != 500, resp.text
+    assert resp.status_code == 200, resp.text

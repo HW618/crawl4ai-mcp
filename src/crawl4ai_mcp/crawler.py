@@ -209,7 +209,7 @@ async def _crawl_once(
     out.date = injected.get("date") or _pick_meta(
         meta, "article:published_time", "date", "pubdate"
     )
-    out.success = bool(out.markdown or out.html)
+    out.success = bool((out.markdown or "").strip())
     if not out.success:
         out.error = f"页面加载成功但未提取到正文（策略：{strategy.name}）"
     return out

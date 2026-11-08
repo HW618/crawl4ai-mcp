@@ -7,6 +7,7 @@ from pathlib import Path
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount
@@ -89,16 +90,48 @@ def create_mcp(strategies: list[SiteStrategy], *, cdp_url: str | None = None) ->
     return mcp
 
 
+def _transport_security(advertise_host: str) -> TransportSecuritySettings:
+    """Allow bind host with/without port, plus Starlette TestClient's testserver."""
+    hosts = [
+        advertise_host,
+        f"{advertise_host}:*",
+        "127.0.0.1",
+        "127.0.0.1:*",
+        "localhost",
+        "localhost:*",
+        "[::1]",
+        "[::1]:*",
+        "testserver",
+        "testserver:*",
+    ]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(dict.fromkeys(hosts)),
+    )
+
+
 def build_asgi_app(
     *,
     api_key: str,
     strategies: list[SiteStrategy],
     cdp_url: str | None = None,
+    host: str = "127.0.0.1",
 ) -> Starlette:
     mcp = create_mcp(strategies, cdp_url=cdp_url)
-    inner = mcp.streamable_http_app(stateless_http=True, json_response=True)
+    # Pass host so DNS-rebinding protection matches the advertised bind address.
+    advertise_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    inner = mcp.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        host=advertise_host,
+        transport_security=_transport_security(advertise_host),
+    )
     protected = BearerAuthMiddleware(inner, api_key=api_key)
-    return Starlette(routes=[Mount("/", app=protected)])
+    # Preserve MCP streamable HTTP lifespan (session manager task group).
+    return Starlette(
+        routes=[Mount("/", app=protected)],
+        lifespan=inner.router.lifespan_context,
+    )
 
 
 def _env_int(name: str, default: int) -> int:
@@ -116,15 +149,21 @@ def serve() -> None:
     api_key = resolve_api_key(os.environ, data_dir)
     user_dir = os.environ.get("CONFIG_DIR", "").strip() or None
     strategies = load_strategies(DEFAULT_CONFIGS, Path(user_dir) if user_dir else None)
+    advertise_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     conn_path = write_connection_json(
-        data_dir, host=host, port=port, path=path, api_key=api_key
+        data_dir, host=advertise_host, port=port, path=path, api_key=api_key
     )
-    url = f"http://{host}:{port}{path}"
+    url = f"http://{advertise_host}:{port}{path}"
     logger.info("MCP endpoint: %s", url)
     logger.info("API key: %s", api_key)
     logger.info("Connection JSON: %s", conn_path)
     logger.info("Loaded %d site strategies", len(strategies))
-    app = build_asgi_app(api_key=api_key, strategies=strategies, cdp_url=cdp_url)
+    app = build_asgi_app(
+        api_key=api_key,
+        strategies=strategies,
+        cdp_url=cdp_url,
+        host=advertise_host,
+    )
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
