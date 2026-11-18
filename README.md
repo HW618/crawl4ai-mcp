@@ -83,6 +83,10 @@ Authorization: Bearer <api_key>
 | `convert_url` | URL → Markdown (`timeout_sec`, `max_chars`, image/link/metadata flags) |
 | `extract_summary` | URL → plain-text summary |
 | `list_site_strategies` | List builtin/user site configs |
+| `fetch_url` | URL → HTML + links (`prefetch`, `max_html_chars`, `max_links`) |
+| `web_search` | Query → organic results via CDP SERP (`engine`: duckduckgo\|bing\|google) |
+| `deep_crawl` | Seed URL → multi-page Markdown (`bfs`\|`dfs`\|`best_first`, depth/pages caps) |
+| `crawl_many` | URL list → Markdown pages (no link discovery, max 100) |
 
 ## Site strategies
 
@@ -102,6 +106,7 @@ Example fields: `name`, `domains`, `css_selector`, `css_selector_fallbacks`, `ex
 | `CRAWL4AI_MCP_DATA_DIR` | Override `~/.crawl4ai-mcp` (Compose uses `/data`) |
 | `CRAWL4AI_NO_CLOUD_NOTICE` | Set `1` to hide Crawl4AI pip banner (Compose sets this) |
 | `CRAWL_CACHE_TTL_SEC` | In-process successful-crawl cache TTL (default `60`; `0` disables) |
+| `CRAWL_MAX_CONCURRENCY` | Overlapping CDP crawls (default `1`) |
 
 ## Tests
 
@@ -119,15 +124,17 @@ python3 scripts/integration_verify.py
 
 Expected: CDP healthy, auth 401s, nine builtin strategies, `example.com` / Wikipedia / IANA converts, summary tool OK. See [docs/operations.md](docs/operations.md) for the checklist, measured latencies, and performance notes.
 
+When bumping the upstream library, follow [docs/upgrading-crawl4ai.md](docs/upgrading-crawl4ai.md) (`crawl4ai` is exact-pinned; Dependabot + unit CI assist).
+
 ## Performance (summary)
 
-Implemented: shared CDP `AsyncWebCrawler` pool, browser-error short-circuit on selector fallbacks, TTL crawl cache (`CRAWL_CACHE_TTL_SEC`), and optional `max_chars` on `convert_url`.
+Implemented: shared CDP `AsyncWebCrawler` pool, browser-error short-circuit on selector fallbacks, TTL crawl cache (`CRAWL_CACHE_TTL_SEC`), a CDP concurrency cap (`CRAWL_MAX_CONCURRENCY`), selector fallbacks probed on the already fetched HTML, and optional `max_chars` on `convert_url`.
 
 On this host with CloakBrowser `0.6.5`, a cold `example.com` convert is ~1.1 s; the **second** convert (and a following summary of the same URL) is ~3 ms via cache. See [docs/operations.md](docs/operations.md).
 
 ## Non-goals (v1)
 
-- Web search or generic query tools beyond convert/summary/list
+- Crawl4AI Cloud `/search` APIs; async job/poll API for long crawls
 - Changes to the `skills` repository
 - Shipping CloakBrowser `0.7+` (license key) as the default Compose image
 
@@ -136,3 +143,4 @@ On this host with CloakBrowser `0.6.5`, a cold `example.com` convert is ~1.1 s; 
 - Spec: `docs/superpowers/specs/2026-11-08-crawl4ai-mcp-design.md`
 - Plan: `docs/superpowers/plans/2026-11-08-crawl4ai-mcp.md`
 - Operations & verification: `docs/operations.md`
+- Upgrading crawl4ai: `docs/upgrading-crawl4ai.md`

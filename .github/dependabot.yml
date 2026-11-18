@@ -1,0 +1,14 @@
+# Weekly pip updates; keep noise low — only crawl4ai (exact pin in pyproject.toml).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-name: crawl4ai
+    commit-message:
+      prefix: build
+      include: scope
