@@ -25,7 +25,7 @@ Publishing a GitHub Release runs `.github/workflows/release-image.yml` on InstaB
 ```bash
 docker compose up -d --build
 docker compose logs -f mcp          # copy API key from "API key: …"
-docker compose down
+docker compose down                 # ./data/credentials.json stays on the host
 ```
 
 `crawl4ai-mcp info` against the data volume:

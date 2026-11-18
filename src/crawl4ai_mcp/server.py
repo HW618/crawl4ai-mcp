@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import threading
 from pathlib import Path
 
 import uvicorn
@@ -18,7 +19,7 @@ from .credentials import (
     resolve_api_key,
     write_connection_json,
 )
-from .crawler import assert_cdp_ready
+from .crawler import CdpConfigError, assert_cdp_ready, watch_cdp
 from .models import SiteStrategy
 from .strategies import load_strategies
 from .tools import (
@@ -32,6 +33,54 @@ from .tools import (
 )
 
 logger = logging.getLogger(__name__)
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+
+def configure_logging() -> None:
+    """Send process logs to stderr with a timestamp on every line."""
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
+    root = logging.getLogger()
+    if root.level == logging.NOTSET or root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+    for handler in root.handlers:
+        if getattr(handler, "_crawl4ai_mcp_log", False):
+            handler.setFormatter(formatter)
+            return
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    handler._crawl4ai_mcp_log = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+
+
+def uvicorn_log_config() -> dict:
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {"format": LOG_FORMAT, "datefmt": LOG_DATEFMT},
+        },
+        "handlers": {
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+                "stream": "ext://sys.stderr",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        },
+    }
+
+
+def _cdp_check_interval() -> float:
+    raw = os.environ.get("CDP_CHECK_INTERVAL_SEC", "5").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 5.0
 
 
 def builtin_configs_dir() -> Path:
@@ -237,13 +286,28 @@ def _env_int(name: str, default: int) -> int:
 
 
 def serve() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    cdp_url = assert_cdp_ready()
+    configure_logging()
     host = os.environ.get("MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
     port = _env_int("MCP_PORT", 8000)
     path = "/mcp"
     data_dir = data_dir_from_env()
     api_key = resolve_api_key(os.environ, data_dir)
+    cred_path = data_dir / "credentials.json"
+    logger.info("API key file: %s", cred_path)
+    try:
+        cdp_url = assert_cdp_ready()
+    except CdpConfigError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
+    interval = _cdp_check_interval()
+    if interval > 0:
+        threading.Thread(
+            target=watch_cdp,
+            kwargs={"url": cdp_url, "interval": interval},
+            name="cdp-watch",
+            daemon=True,
+        ).start()
+        logger.info("CDP health check every %ss: %s", interval, cdp_url)
     user_dir = os.environ.get("CONFIG_DIR", "").strip() or None
     strategies = load_strategies(builtin_configs_dir(), Path(user_dir) if user_dir else None)
     advertise_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
@@ -261,7 +325,7 @@ def serve() -> None:
         cdp_url=cdp_url,
         host=advertise_host,
     )
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_config=uvicorn_log_config())
 
 
 def cmd_serve(_: argparse.Namespace) -> int:
