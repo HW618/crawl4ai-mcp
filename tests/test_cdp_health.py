@@ -11,7 +11,6 @@ from crawl4ai_mcp.crawler import (
     is_valid_cdp,
     normalize_cdp_url,
     require_cdp_url,
-    watch_cdp,
 )
 from crawl4ai_mcp.server import configure_logging, serve
 
@@ -57,24 +56,6 @@ def test_is_valid_cdp_accepts_websocket_upgrade():
     assert is_valid_cdp(url, timeout=2) is True
 
 
-def test_watch_cdp_exits_when_endpoint_fails():
-    exited: list[int] = []
-    stop = threading.Event()
-
-    def _sleep(seconds: float) -> bool:
-        return False
-
-    watch_cdp(
-        "http://127.0.0.1:9",
-        interval=0.01,
-        stop=stop,
-        sleep=_sleep,
-        check=lambda _url: False,
-        die=exited.append,
-    )
-    assert exited == [1]
-
-
 def test_configure_logging_includes_timestamp():
     import logging
 
@@ -91,12 +72,30 @@ def test_configure_logging_includes_timestamp():
 def test_serve_persists_api_key_and_exits_when_cdp_is_down(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CDP_URL", "http://127.0.0.1:1")
     monkeypatch.setenv("CRAWL4AI_MCP_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("CDP_CHECK_INTERVAL_SEC", "0")
     with pytest.raises(SystemExit) as exc:
         serve()
     assert exc.value.code == 1
     saved = json.loads((tmp_path / "credentials.json").read_text(encoding="utf-8"))
     assert saved["api_key"]
+
+
+def test_serve_checks_cdp_once_at_startup(tmp_path: Path, monkeypatch):
+    calls: list[str] = []
+
+    def _ready() -> str:
+        calls.append("checked")
+        return "http://127.0.0.1:9222"
+
+    monkeypatch.setenv("CDP_URL", "http://127.0.0.1:9222")
+    monkeypatch.setenv("CRAWL4AI_MCP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CDP_CHECK_INTERVAL_SEC", "0.01")
+    monkeypatch.setattr("crawl4ai_mcp.server.assert_cdp_ready", _ready)
+    monkeypatch.setattr("crawl4ai_mcp.server.uvicorn.run", lambda *args, **kwargs: None)
+    before = {thread.name for thread in threading.enumerate()}
+    serve()
+    started = {thread.name for thread in threading.enumerate()} - before
+    assert calls == ["checked"]
+    assert "cdp-watch" not in started
 
 
 def test_http_cdp_version_endpoint_is_accepted():

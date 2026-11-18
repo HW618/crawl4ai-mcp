@@ -11,9 +11,8 @@ import logging
 import os
 import socket
 import ssl
-import threading
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from urllib.parse import urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -269,33 +268,6 @@ def assert_cdp_ready(cdp_url: str | None = None) -> str:
     if not is_valid_cdp(url):
         raise CdpConfigError(f"CDP endpoint is not available or not compliant: {url}")
     return url
-
-
-def watch_cdp(
-    url: str,
-    *,
-    interval: float,
-    stop: threading.Event | None = None,
-    sleep: Callable[[float], bool] | None = None,
-    check: Callable[[str], bool] = is_valid_cdp,
-    die: Callable[[int], None] = os._exit,
-) -> None:
-    """Poll the CDP endpoint and stop the process when it becomes unhealthy."""
-    event = stop or threading.Event()
-    waiter = sleep or event.wait
-    while True:
-        if waiter(interval):
-            return
-        try:
-            healthy = check(url)
-        except Exception:
-            logger.exception("CDP health check failed for %s", url)
-            healthy = False
-        if healthy:
-            continue
-        logger.error("CDP endpoint is unavailable, exiting: %s", url)
-        die(1)
-        return
 
 
 def build_markdown_generator() -> DefaultMarkdownGenerator:

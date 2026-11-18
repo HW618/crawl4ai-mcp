@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import threading
 from pathlib import Path
 
 import uvicorn
@@ -19,7 +18,7 @@ from .credentials import (
     resolve_api_key,
     write_connection_json,
 )
-from .crawler import CdpConfigError, assert_cdp_ready, watch_cdp
+from .crawler import CdpConfigError, assert_cdp_ready
 from .models import SiteStrategy
 from .strategies import load_strategies
 from .tools import (
@@ -73,14 +72,6 @@ def uvicorn_log_config() -> dict:
             "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
         },
     }
-
-
-def _cdp_check_interval() -> float:
-    raw = os.environ.get("CDP_CHECK_INTERVAL_SEC", "5").strip()
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return 5.0
 
 
 def builtin_configs_dir() -> Path:
@@ -299,15 +290,7 @@ def serve() -> None:
     except CdpConfigError as exc:
         logger.error("%s", exc)
         raise SystemExit(1) from exc
-    interval = _cdp_check_interval()
-    if interval > 0:
-        threading.Thread(
-            target=watch_cdp,
-            kwargs={"url": cdp_url, "interval": interval},
-            name="cdp-watch",
-            daemon=True,
-        ).start()
-        logger.info("CDP health check every %ss: %s", interval, cdp_url)
+    logger.info("CDP endpoint: %s", cdp_url)
     user_dir = os.environ.get("CONFIG_DIR", "").strip() or None
     strategies = load_strategies(builtin_configs_dir(), Path(user_dir) if user_dir else None)
     advertise_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
