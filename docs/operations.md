@@ -18,7 +18,7 @@ See [upgrading-crawl4ai.md](upgrading-crawl4ai.md) for the pin-bump process.
 
 Internal CDP URL used by MCP: `http://cloakbrowser:9222`.
 
-Publishing a GitHub Release runs `.github/workflows/release-image.yml` on InstaBox (`instabox-medium`) and pushes `linux/amd64` to `ghcr.io/<owner>/<repo>`. The image is tagged with the release tag. A stable release also moves `latest`. Pre-releases do not. The instabox GitHub App must be installed on the repository, and the workflow file has to be on the default branch.
+Publishing a GitHub Release runs `.github/workflows/release-image.yml` on InstaBox (`instabox-medium`) and pushes a `linux/amd64` and `linux/arm64` index to `ghcr.io/<owner>/<repo>`. The image is tagged with the release tag. A stable release also moves `latest`. Pre-releases do not. The instabox GitHub App must be installed on the repository, and the workflow file has to be on the default branch. An amd64-only image fails on another CPU with `exec /usr/local/bin/crawl4ai-mcp: exec format error`.
 
 ## Start / stop
 
