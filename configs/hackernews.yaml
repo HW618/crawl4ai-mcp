@@ -6,6 +6,6 @@ css_selector_fallbacks:
   - "#bigbox"
   - "table.itemlist"
   - "tr.athing"
-excluded_selector: ".votelinks, script, style"
+excluded_selector: "script, style"
 wait_for: "css:#bigbox, table.itemlist, tr.athing"
 title_selector: "title"

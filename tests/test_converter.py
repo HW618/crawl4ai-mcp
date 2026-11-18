@@ -47,14 +47,14 @@ def test_convert_strips_images_and_links():
 def test_simple_html_table_becomes_a_pipe_table():
     text = convert_to_markdown(
         _ok(
-            markdown="<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>",
+            markdown="Intro paragraph.<table><tr><th>A</th><th>B</th></tr><tr><td colspan=\"2\">wide</td></tr><tr><td>1</td><td>2</td></tr></table>Outro paragraph.",
             title="Hello",
         ),
         include_metadata=False,
     )
     assert "<table" not in text.lower()
-    assert "| A | B |" in text
-    assert "| 1 | 2 |" in text
+    table = "| A | B |\n| --- | --- |\n| wide |  |\n| 1 | 2 |"
+    assert f"Intro paragraph.\n\n{table}\n\nOutro paragraph." in text
 
 
 def test_nested_layout_table_keeps_story_link_without_html():
@@ -72,10 +72,9 @@ def test_nested_layout_table_keeps_story_link_without_html():
     """
     text = convert_to_markdown(_ok(markdown=html, title="Hacker News"), include_metadata=False)
     assert "<table" not in text.lower()
-    assert "Example story" in text
-    assert "https://example.com/post" in text
-    assert "10 points by ada | 3 comments" in text
-    assert "\\|" not in text
+    assert "| 1. |  | [Example story](https://example.com/post) |" in text
+    assert "| --- | --- | --- |" in text
+    assert "|  |  | 10 points by ada \\| 3 comments |" in text
 
 
 def test_layout_row_tags_do_not_survive_table_conversion():

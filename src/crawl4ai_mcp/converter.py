@@ -81,24 +81,60 @@ def _inline_markdown(node) -> None:
 
 def _cell_text(cell) -> str:
     _inline_markdown(cell)
-    lines = []
-    for line in cell.get_text("\n", strip=True).splitlines():
-        compact = " ".join(line.split())
-        if compact:
-            lines.append(compact)
-    return "\n".join(lines)
+    return cell.get_text("\n", strip=True)
 
 
-def _row_values(table) -> list[list[str]]:
-    rows: list[list[str]] = []
+def _span(cell, name: str) -> int:
+    try:
+        return max(1, int(cell.get(name) or 1))
+    except ValueError:
+        return 1
+
+
+def _table_grid(table) -> list[list[str]]:
+    """Keep each HTML row's columns, including cells left empty by colspan or rowspan."""
+    pending: dict[int, int] = {}
+    grid: list[list[str]] = []
     for tr in table.find_all("tr"):
         if tr.find_parent("tr") is not None:
             continue
         cells = tr.find_all(["th", "td"], recursive=False)
-        if not cells:
+        if not cells and not any(pending.values()):
             continue
-        rows.append([_cell_text(cell) for cell in cells])
-    return rows
+        parsed = [(_cell_text(cell), _span(cell, "colspan"), _span(cell, "rowspan")) for cell in cells]
+        row: list[str] = []
+        col = 0
+        cell_i = 0
+        while cell_i < len(parsed) or any(count > 0 for count in pending.values()):
+            if pending.get(col, 0) > 0:
+                row.append("")
+                pending[col] -= 1
+                col += 1
+                continue
+            if cell_i >= len(parsed):
+                break
+            text, colspan, rowspan = parsed[cell_i]
+            cell_i += 1
+            for offset in range(colspan):
+                row.append(text if offset == 0 else "")
+                if rowspan > 1:
+                    pending[col] = rowspan - 1
+                col += 1
+        if row:
+            grid.append(row)
+    if not grid:
+        return []
+    width = max(len(row) for row in grid)
+    return [row + [""] * (width - len(row)) for row in grid]
+
+
+def _pipe_row(values: list[str]) -> str:
+    cells = [" ".join(value.split()).replace("|", "\\|") for value in values]
+    return "| " + " | ".join(cells) + " |"
+
+
+def _contains_pipe_table(text: str) -> bool:
+    return any(line.strip().startswith("|") and line.strip().endswith("|") for line in text.splitlines())
 
 
 def _render_table(html_table: str) -> str:
@@ -106,25 +142,14 @@ def _render_table(html_table: str) -> str:
     table = soup.find("table")
     if table is None:
         return BeautifulSoup(html_table, "html.parser").get_text("\n", strip=True)
-    rows = _row_values(table)
+    rows = _table_grid(table)
     if not rows:
         return ""
-    spanned = bool(table.find(attrs={"rowspan": True}) or table.find(attrs={"colspan": True}))
-    width = max(len(row) for row in rows)
-    rectangular = all(len(row) == width for row in rows)
-    if spanned or not rectangular or width < 2:
-        lines = []
-        for values in rows:
-            kept = [value for value in values if value]
-            if kept:
-                lines.append(" | ".join(kept))
-        return "\n".join(lines)
-    def _pipes(values: list[str]) -> str:
-        return "| " + " | ".join(value.replace("|", "\\|") for value in values) + " |"
-
-    header, body = rows[0], rows[1:]
-    lines = [_pipes(header), "|" + "|".join([" --- "] * width) + "|"]
-    lines += [_pipes(row) for row in body]
+    if any(_contains_pipe_table(cell) for row in rows for cell in row):
+        blocks = [cell.strip() for row in rows for cell in row if cell.strip()]
+        return "\n\n".join(blocks)
+    lines = [_pipe_row(rows[0]), "|" + "|".join([" --- "] * len(rows[0])) + "|"]
+    lines += [_pipe_row(row) for row in rows[1:]]
     return "\n".join(lines)
 
 
@@ -173,11 +198,36 @@ def _innermost_table_spans(md: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _is_pipe_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") and stripped.endswith("|")
+
+
+def _separate_pipe_tables(md: str) -> str:
+    """Keep each pipe table intact and leave one blank line around it."""
+    lines = md.split("\n")
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        if not _is_pipe_row(lines[index]):
+            output.append(lines[index])
+            index += 1
+            continue
+        if output and output[-1].strip():
+            output.append("")
+        while index < len(lines) and _is_pipe_row(lines[index]):
+            output.append(lines[index].strip())
+            index += 1
+        if index < len(lines) and lines[index].strip():
+            output.append("")
+    return "\n".join(output)
+
+
 def _html_tables_to_markdown(md: str) -> str:
     for _ in range(50):
         spans = _innermost_table_spans(md)
         if not spans:
-            return _LAYOUT_TAG.sub("", md)
+            return _separate_pipe_tables(_LAYOUT_TAG.sub("", md))
         updated = md
         for start, end in reversed(spans):
             raw = updated[start:end]
@@ -187,9 +237,9 @@ def _html_tables_to_markdown(md: str) -> str:
                 rendered = BeautifulSoup(raw, "html.parser").get_text("\n", strip=True)
             updated = updated[:start] + "\n\n" + rendered.strip() + "\n\n" + updated[end:]
         if updated == md:
-            return _LAYOUT_TAG.sub("", md)
+            return _separate_pipe_tables(_LAYOUT_TAG.sub("", md))
         md = updated
-    return _LAYOUT_TAG.sub("", md)
+    return _separate_pipe_tables(_LAYOUT_TAG.sub("", md))
 
 
 def _yaml_header(result: CrawlResult) -> list[str]:
