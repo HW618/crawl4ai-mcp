@@ -179,8 +179,108 @@ def test_deep_run_config_uses_seed_strategy_selector():
         wait_for="css:#js_content",
         excluded_selector=".qr",
         js_snippets=["() => {}"],
+        title_selector="h1.rich_media_title",
+        author_selector=".profile_nickname",
+        date_selector="#publish_time",
     )
     cfg = build_deep_run_config(strategy, deep_strategy=object(), timeout_ms=1000)
     assert cfg.css_selector == "#js_content"
     assert cfg.wait_for == "css:#js_content"
     assert cfg.excluded_selector == ".qr"
+    js = cfg.js_code if isinstance(cfg.js_code, str) else "\n".join(cfg.js_code or [])
+    assert "() => {}" in js
+    assert "mtp-meta" in js
+    assert "h1.rich_media_title" in js
+    assert ".profile_nickname" in js
+    assert "#publish_time" in js
+
+
+@pytest.mark.asyncio
+async def test_deep_crawl_retries_empty_pages_with_site_strategy():
+    """Deep crawl uses one selector. Empty child pages are re-crawled per URL."""
+    from types import SimpleNamespace
+
+    from crawl4ai_mcp.crawler import deep_crawl_pages
+
+    strategies = [
+        SiteStrategy(
+            name="知乎",
+            domains=("zhihu.com",),
+            css_selector=".Post-RichTextContainer",
+            css_selector_fallbacks=(".RichContent-inner",),
+            title_suffixes=(" - 知乎",),
+        ),
+        SiteStrategy(name="普通网页", source="builtin"),
+    ]
+    long_md = "# A - 知乎\n\n" + ("body " * 80)
+    items = [
+        SimpleNamespace(
+            url="https://www.zhihu.com/a",
+            success=True,
+            html="<p>x</p>",
+            markdown=SimpleNamespace(raw_markdown=long_md),
+            metadata={"title": "A - 知乎", "depth": 0, "score": 0.2},
+            error_message=None,
+        ),
+        SimpleNamespace(
+            url="https://zhuanlan.zhihu.com/p/2",
+            success=True,
+            html="<p></p>",
+            markdown=SimpleNamespace(raw_markdown=""),
+            metadata={"depth": 1, "score": 0.9},
+            error_message=None,
+        ),
+    ]
+    crawler = SimpleNamespace(arun=AsyncMock(return_value=items))
+    recrawled = CrawlResult(
+        url="https://zhuanlan.zhihu.com/p/2",
+        success=True,
+        title="Child",
+        markdown="# Child\n\n" + ("fallback " * 40),
+        strategy_name="知乎",
+    )
+    with patch("crawl4ai_mcp.crawler.assert_cdp_ready", return_value="http://cdp"):
+        with patch("crawl4ai_mcp.crawler._pool.get", new_callable=AsyncMock, return_value=crawler):
+            with patch(
+                "crawl4ai_mcp.crawler.crawl_page", new_callable=AsyncMock, return_value=recrawled
+            ) as crawl:
+                hits, err = await deep_crawl_pages(
+                    "https://www.zhihu.com/a",
+                    strategies,
+                    strategy="bfs",
+                    max_depth=1,
+                    max_pages=5,
+                    cdp_url="http://cdp",
+                )
+    assert err == ""
+    assert crawl.await_count == 1
+    assert crawl.await_args.args[0] == "https://zhuanlan.zhihu.com/p/2"
+    assert hits[0][0].markdown.startswith("# A")
+    assert hits[0][1] == 0
+    assert hits[1][0].title == "Child"
+    assert hits[1][1] == 1
+    assert hits[1][2] == 0.9
+    assert "fallback" in hits[1][0].markdown
+
+
+def test_deep_result_prefers_injected_meta():
+    from types import SimpleNamespace
+
+    from crawl4ai_mcp.crawler import _map_crawl4ai_result
+
+    strategy = SiteStrategy(name="知乎", title_suffixes=(" - 知乎",))
+    raw = SimpleNamespace(
+        url="https://zhuanlan.zhihu.com/p/1",
+        success=True,
+        html=(
+            '<div class="mtp-meta" data-title="Real Title - 知乎" '
+            'data-author="Ada" data-date="2020-01-01"></div>'
+        ),
+        markdown=SimpleNamespace(raw_markdown="# ignored\n\n" + ("x " * 50)),
+        metadata={"title": "From Meta - 知乎", "author": "Wrong", "date": "1999"},
+        error_message=None,
+    )
+    mapped = _map_crawl4ai_result(raw, strategy)
+    assert mapped.title == "Real Title"
+    assert mapped.author == "Ada"
+    assert mapped.date == "2020-01-01"

@@ -241,6 +241,21 @@ def _content_selectors(strategy: SiteStrategy) -> list[str | None]:
     return [strategy.css_selector, *strategy.css_selector_fallbacks]
 
 
+def _page_js(strategy: SiteStrategy, selector: str | None) -> list[str] | None:
+    """Site snippets plus the meta-inject script used when a content selector is set."""
+    snippets = list(strategy.js_snippets)
+    if selector:
+        snippets.append(_build_meta_inject_js(selector, strategy))
+    return snippets or None
+
+
+def _needs_content_retry(result: CrawlResult) -> bool:
+    """True when a deep-crawl hit loaded but extracted no markdown."""
+    if result.error_kind == "browser" or not result.url:
+        return False
+    return not (result.markdown or "").strip()
+
+
 def _cache_key(url: str, strategy_name: str) -> str:
     return f"{strategy_name}\n{url}"
 
@@ -261,11 +276,7 @@ async def _crawl_once(
         excluded_selector=strategy.excluded_selector,
         excluded_tags=["script", "style", "noscript", "iframe", "nav", "footer"],
         wait_for=strategy.wait_for,
-        js_code=(
-            strategy.js_snippets
-            + ([_build_meta_inject_js(selector, strategy)] if selector else [])
-        )
-        or None,
+        js_code=_page_js(strategy, selector),
         page_timeout=timeout_ms,
         word_count_threshold=5,
         verbose=verbose,
@@ -362,9 +373,15 @@ def _map_crawl4ai_result(raw: object, strategy: SiteStrategy) -> CrawlResult:
     if markdown_obj is not None:
         raw_md = getattr(markdown_obj, "raw_markdown", None)
         out.markdown = _dedupe_repeats(str(raw_md if raw_md is not None else markdown_obj))
-    out.title = _clean_title(_pick_meta(meta, "title", "og:title") or "", strategy)
-    out.author = _pick_meta(meta, "author", "article:author")
-    out.date = _pick_meta(meta, "article:published_time", "date", "pubdate")
+    injected = _extract_injected_meta(out.html) if out.html else {}
+    out.title = _clean_title(
+        injected.get("title") or _pick_meta(meta, "title", "og:title") or "",
+        strategy,
+    )
+    out.author = injected.get("author") or _pick_meta(meta, "author", "article:author")
+    out.date = injected.get("date") or _pick_meta(
+        meta, "article:published_time", "date", "pubdate"
+    )
     out.success = bool((out.markdown or "").strip())
     if not out.success:
         out.error = f"页面加载成功但未提取到正文（策略：{strategy.name}）"
@@ -379,15 +396,20 @@ def build_deep_run_config(
     timeout_ms: int,
     verbose: bool = False,
 ) -> CrawlerRunConfig:
-    """Build CrawlerRunConfig for deep crawl using the seed URL's site strategy."""
+    """Build CrawlerRunConfig for deep crawl using the seed URL's site strategy.
+
+    One crawl4ai config can carry only the primary selector. Pages that come
+    back without markdown are re-crawled per URL so fallbacks still run.
+    """
+    selector = seed_strategy.css_selector
     return CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         markdown_generator=build_markdown_generator(),
-        css_selector=seed_strategy.css_selector,
+        css_selector=selector,
         excluded_selector=seed_strategy.excluded_selector,
         excluded_tags=["script", "style", "noscript", "iframe", "nav", "footer"],
         wait_for=seed_strategy.wait_for,
-        js_code=seed_strategy.js_snippets or None,
+        js_code=_page_js(seed_strategy, selector),
         page_timeout=timeout_ms,
         word_count_threshold=5,
         verbose=verbose,
@@ -462,6 +484,21 @@ async def deep_crawl_pages(
         hits.append((mapped, d, s))
     if saw_browser:
         await _pool.invalidate()
+    elif hits:
+        for index, (mapped, depth, score) in enumerate(hits):
+            if not _needs_content_retry(mapped):
+                continue
+            recrawled = await crawl_page(
+                mapped.url,
+                strategies,
+                timeout_ms=timeout_ms,
+                verbose=verbose,
+                cdp_url=resolved,
+            )
+            hits[index] = (recrawled, depth, score)
+            if recrawled.error_kind == "browser":
+                await _pool.invalidate()
+                break
     if not hits:
         return [], "Deep crawl returned no pages"
     return hits, ""
