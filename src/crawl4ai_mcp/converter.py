@@ -60,84 +60,136 @@ def _squeeze_blank_lines(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def _table_to_pipe(html_table: str) -> str:
-    soup = BeautifulSoup(html_table, "html.parser")
-    if (
-        len(soup.find_all("table")) > 1
-        or soup.find(attrs={"rowspan": True})
-        or soup.find(attrs={"colspan": True})
-        or soup.find(["img", "ul", "ol", "pre", "blockquote"])
-    ):
-        return html_table
-    rows = []
-    for tr in soup.find_all("tr"):
-        cells = tr.find_all(["th", "td"])
+def _inline_markdown(node) -> None:
+    for anchor in list(node.find_all("a")):
+        href = (anchor.get("href") or "").strip()
+        label = " ".join(anchor.get_text(" ", strip=True).split())
+        if href and label:
+            anchor.replace_with(f"[{label}]({href})")
+        elif label:
+            anchor.replace_with(label)
+        else:
+            anchor.decompose()
+    for image in list(node.find_all("img")):
+        src = (image.get("src") or "").strip()
+        alt = " ".join((image.get("alt") or "").split())
+        if src:
+            image.replace_with(f"![{alt}]({src})")
+        else:
+            image.decompose()
+
+
+def _cell_text(cell) -> str:
+    _inline_markdown(cell)
+    lines = []
+    for line in cell.get_text("\n", strip=True).splitlines():
+        compact = " ".join(line.split())
+        if compact:
+            lines.append(compact)
+    return "\n".join(lines)
+
+
+def _row_values(table) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for tr in table.find_all("tr"):
+        if tr.find_parent("tr") is not None:
+            continue
+        cells = tr.find_all(["th", "td"], recursive=False)
         if not cells:
             continue
-        values = [" ".join(c.get_text(" ", strip=True).split()).replace("|", "\\|") for c in cells]
-        rows.append(values)
+        rows.append([_cell_text(cell) for cell in cells])
+    return rows
+
+
+def _render_table(html_table: str) -> str:
+    soup = BeautifulSoup(html_table, "html.parser")
+    table = soup.find("table")
+    if table is None:
+        return BeautifulSoup(html_table, "html.parser").get_text("\n", strip=True)
+    rows = _row_values(table)
     if not rows:
-        return html_table
-    width = max(len(r) for r in rows)
-    rows = [r + [""] * (width - len(r)) for r in rows]
+        return ""
+    spanned = bool(table.find(attrs={"rowspan": True}) or table.find(attrs={"colspan": True}))
+    width = max(len(row) for row in rows)
+    rectangular = all(len(row) == width for row in rows)
+    if spanned or not rectangular or width < 2:
+        lines = []
+        for values in rows:
+            kept = [value for value in values if value]
+            if kept:
+                lines.append(" | ".join(kept))
+        return "\n".join(lines)
+    def _pipes(values: list[str]) -> str:
+        return "| " + " | ".join(value.replace("|", "\\|") for value in values) + " |"
+
     header, body = rows[0], rows[1:]
-    lines = ["| " + " | ".join(header) + " |", "|" + "|".join([" --- "] * width) + "|"]
-    lines += ["| " + " | ".join(r) + " |" for r in body]
+    lines = [_pipes(header), "|" + "|".join([" --- "] * width) + "|"]
+    lines += [_pipes(row) for row in body]
     return "\n".join(lines)
 
 
 _TABLE_OPEN = re.compile(r"<table\b[^>]*>", re.I)
 _TABLE_CLOSE = re.compile(r"</table\s*>", re.I)
+_LAYOUT_TAG = re.compile(r"</?(?:tr|td|th|tbody|thead|tfoot)\b[^>]*>", re.I)
 
 
-def _outer_table_spans(md: str) -> list[tuple[int, int]]:
+def _table_end(md: str, start: int) -> int | None:
+    opened = _TABLE_OPEN.match(md, start)
+    if not opened:
+        return None
+    depth = 1
+    pos = opened.end()
+    while depth:
+        nxt_open = _TABLE_OPEN.search(md, pos)
+        nxt_close = _TABLE_CLOSE.search(md, pos)
+        if not nxt_close:
+            return None
+        if nxt_open and nxt_open.start() < nxt_close.start():
+            depth += 1
+            pos = nxt_open.end()
+        else:
+            depth -= 1
+            pos = nxt_close.end()
+    return pos
+
+
+def _innermost_table_spans(md: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     cursor = 0
+    lowered = md.lower()
     while True:
-        opened = _TABLE_OPEN.search(md, cursor)
-        if not opened:
+        start = lowered.find("<table", cursor)
+        if start < 0:
             break
-        depth = 1
-        pos = opened.end()
-        end = None
-        while depth:
-            nxt_open = _TABLE_OPEN.search(md, pos)
-            nxt_close = _TABLE_CLOSE.search(md, pos)
-            if not nxt_close:
-                break
-            if nxt_open and nxt_open.start() < nxt_close.start():
-                depth += 1
-                pos = nxt_open.end()
-            else:
-                depth -= 1
-                pos = nxt_close.end()
-                if depth == 0:
-                    end = pos
+        end = _table_end(md, start)
         if end is None:
-            cursor = opened.end()
+            cursor = start + 6
             continue
-        spans.append((opened.start(), end))
-        cursor = end
+        if "<table" not in lowered[start + 6 : end]:
+            spans.append((start, end))
+            cursor = end
+        else:
+            cursor = start + 6
     return spans
 
 
 def _html_tables_to_markdown(md: str) -> str:
-    spans = _outer_table_spans(md)
-    if not spans:
-        return md
-    parts: list[str] = []
-    cursor = 0
-    for start, end in spans:
-        parts.append(md[cursor:start])
-        raw = md[start:end]
-        try:
-            table = _table_to_pipe(raw)
-        except Exception:
-            table = raw
-        parts.append("\n\n" + table.strip() + "\n\n")
-        cursor = end
-    parts.append(md[cursor:])
-    return "".join(parts)
+    for _ in range(50):
+        spans = _innermost_table_spans(md)
+        if not spans:
+            return _LAYOUT_TAG.sub("", md)
+        updated = md
+        for start, end in reversed(spans):
+            raw = updated[start:end]
+            try:
+                rendered = _render_table(raw)
+            except Exception:
+                rendered = BeautifulSoup(raw, "html.parser").get_text("\n", strip=True)
+            updated = updated[:start] + "\n\n" + rendered.strip() + "\n\n" + updated[end:]
+        if updated == md:
+            return _LAYOUT_TAG.sub("", md)
+        md = updated
+    return _LAYOUT_TAG.sub("", md)
 
 
 def _yaml_header(result: CrawlResult) -> list[str]:

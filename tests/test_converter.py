@@ -44,6 +44,51 @@ def test_convert_strips_images_and_links():
     assert "pic" in text
 
 
+def test_simple_html_table_becomes_a_pipe_table():
+    text = convert_to_markdown(
+        _ok(
+            markdown="<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>",
+            title="Hello",
+        ),
+        include_metadata=False,
+    )
+    assert "<table" not in text.lower()
+    assert "| A | B |" in text
+    assert "| 1 | 2 |" in text
+
+
+def test_nested_layout_table_keeps_story_link_without_html():
+    html = """
+    <table id="hnmain"><tr><td>
+      <table class="itemlist">
+        <tr class="athing">
+          <td class="title"><span class="rank">1.</span></td>
+          <td></td>
+          <td class="title"><a href="https://example.com/post">Example story</a></td>
+        </tr>
+        <tr><td colspan="2"></td><td class="subtext">10 points by ada | 3 comments</td></tr>
+      </table>
+    </td></tr></table>
+    """
+    text = convert_to_markdown(_ok(markdown=html, title="Hacker News"), include_metadata=False)
+    assert "<table" not in text.lower()
+    assert "Example story" in text
+    assert "https://example.com/post" in text
+    assert "10 points by ada | 3 comments" in text
+    assert "\\|" not in text
+
+
+def test_layout_row_tags_do_not_survive_table_conversion():
+    html = (
+        '<tr id="bigbox"><td><table><tr><td>1.</td>'
+        '<td><a href="https://example.com/post">Story</a></td></tr></table></td></tr>'
+    )
+    text = convert_to_markdown(_ok(markdown=html, title="Hacker News"), include_metadata=False)
+    assert "<tr" not in text.lower()
+    assert "<td" not in text.lower()
+    assert "Story" in text
+
+
 def test_extract_summary_respects_max_length():
     long_md = "word " * 500
     text = extract_summary(_ok(markdown=long_md, title="T"), max_length=40)

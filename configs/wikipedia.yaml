@@ -1,0 +1,13 @@
+name: 维基百科
+domains:
+  - wikipedia.org
+title_suffixes:
+  - " - Wikipedia"
+  - " - 维基百科，自由的百科全书"
+  - " - 维基百科"
+css_selector: "#mw-content-text .mw-parser-output"
+css_selector_fallbacks:
+  - "#mw-content-text"
+excluded_selector: ".mw-editsection, .navbox, .vertical-navbox, .sistersitebox, table.ambox, .mw-empty-elt, .noprint, #toc, .vector-toc"
+wait_for: "css:#mw-content-text"
+title_selector: "h1#firstHeading, h1"
