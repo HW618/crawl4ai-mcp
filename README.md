@@ -20,7 +20,7 @@ docker compose up -d --build
 docker compose logs -f mcp
 ```
 
-- MCP: `http://127.0.0.1:8000/mcp` (Bearer key in logs / volume)
+- MCP: `http://127.0.0.1:8000/mcp` (Bearer key in logs and `./data/credentials.json`, reused when the container is recreated)
 - CDP (host only): `http://127.0.0.1:9222` — do not publish to the public internet
 - Inside Compose, MCP uses `CDP_URL=http://cloakbrowser:9222`
 - No `CLOAKBROWSER_LICENSE_KEY` required for the pinned `0.6.5` image
@@ -57,7 +57,7 @@ crawl4ai-mcp serve
 
 On start the process:
 
-1. Validates `CDP_URL`
+1. Checks `CDP_URL` once. A missing or unhealthy endpoint exits. The running server does not poll it again.
 2. Uses `API_KEY` if set, otherwise generates one and stores it under `~/.crawl4ai-mcp/`
 3. Writes `~/.crawl4ai-mcp/connection.json`
 4. Logs the MCP URL and API key
@@ -98,8 +98,8 @@ Example fields: `name`, `domains`, `css_selector`, `css_selector_fallbacks`, `ex
 
 | Variable | Meaning |
 | --- | --- |
-| `CDP_URL` | Required CDP HTTP endpoint |
-| `API_KEY` | Optional fixed Bearer token |
+| `CDP_URL` | Required CDP endpoint. `http(s)://host:port` or a `ws(s)://host/devtools/...` debugger URL. A bare `ws://host:port` is treated as HTTP discovery. |
+| `API_KEY` | Optional fixed Bearer token. When unset, the generated key is stored in `CRAWL4AI_MCP_DATA_DIR/credentials.json` and reused on restart. |
 | `CONFIG_DIR` | Optional user strategy directory |
 | `BUILTIN_CONFIGS_DIR` | Optional override for builtin YAML directory |
 | `MCP_HOST` / `MCP_PORT` | Bind address |

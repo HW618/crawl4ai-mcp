@@ -2,8 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# libatomic1: Playwright's bundled Node driver needs libatomic.so.1.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./

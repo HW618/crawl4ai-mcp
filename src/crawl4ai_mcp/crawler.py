@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import contextvars
 import json
 import logging
 import os
+import socket
+import ssl
 import urllib.request
 from collections.abc import Mapping
+from urllib.parse import urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
@@ -153,17 +157,39 @@ async def reset_crawler_runtime() -> None:
     _reset_crawl_limiter()
 
 
+def normalize_cdp_url(url: str) -> str:
+    """Accept HTTP discovery URLs and WebSocket debugger URLs.
+
+    A bare ``ws://host:port`` (or ``wss``) has no debugger path. Playwright
+    discovers that browser through HTTP ``/json/version``, so those become
+    ``http(s)://host:port``. A full ``ws(s)://host/devtools/...`` URL is kept.
+    """
+    raw = url.strip()
+    parsed = urlparse(raw)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https", "ws", "wss"} or not parsed.hostname:
+        return raw.rstrip("/")
+    if scheme in {"ws", "wss"} and parsed.path in {"", "/"}:
+        http_scheme = "https" if scheme == "wss" else "http"
+        return urlunparse((http_scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+    if parsed.path in {"", "/"}:
+        return urlunparse((scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+    return raw
+
+
 def require_cdp_url(env: Mapping[str, str] | None = None) -> str:
     source = os.environ if env is None else env
-    url = str(source.get("CDP_URL", "")).strip().rstrip("/")
-    if not url:
+    raw = str(source.get("CDP_URL", "")).strip()
+    if not raw:
         raise CdpConfigError("CDP_URL is required and must point at an external CDP browser")
+    url = normalize_cdp_url(raw)
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https", "ws", "wss"} or not parsed.hostname:
+        raise CdpConfigError(f"CDP_URL must be an http(s) or ws(s) endpoint: {raw}")
     return url
 
 
-def is_valid_cdp(cdp_url: str, timeout: float = 1.5) -> bool:
-    if not cdp_url.startswith(("http://", "https://")):
-        return False
+def _http_cdp_ok(cdp_url: str, timeout: float) -> bool:
     try:
         with urllib.request.urlopen(f"{cdp_url}/json/version", timeout=timeout) as resp:
             if resp.status != 200:
@@ -174,8 +200,71 @@ def is_valid_cdp(cdp_url: str, timeout: float = 1.5) -> bool:
         return False
 
 
+def _ws_cdp_ok(cdp_url: str, timeout: float) -> bool:
+    """True when the URL accepts a WebSocket upgrade (CDP debugger socket)."""
+    parsed = urlparse(cdp_url)
+    host = parsed.hostname
+    if not host:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    ).encode("ascii")
+    raw: socket.socket | None = None
+    sock: socket.socket | None = None
+    try:
+        raw = socket.create_connection((host, port), timeout=timeout)
+        sock = raw
+        if parsed.scheme == "wss":
+            sock = ssl.create_default_context().wrap_socket(raw, server_hostname=host)
+        sock.settimeout(timeout)
+        sock.sendall(request)
+        data = b""
+        while b"\r\n\r\n" not in data and len(data) < 8192:
+            chunk = sock.recv(1024)
+            if not chunk:
+                break
+            data += chunk
+    except Exception:
+        return False
+    finally:
+        for item in (sock, raw):
+            if item is None:
+                continue
+            try:
+                item.close()
+            except Exception:
+                pass
+    status = data.split(b"\r\n", 1)[0]
+    return b" 101 " in status
+
+
+def is_valid_cdp(cdp_url: str, timeout: float = 1.5) -> bool:
+    url = normalize_cdp_url(cdp_url)
+    parsed = urlparse(url)
+    if parsed.scheme in {"http", "https"}:
+        return _http_cdp_ok(url, timeout)
+    if parsed.scheme in {"ws", "wss"}:
+        return _ws_cdp_ok(url, timeout)
+    return False
+
+
 def assert_cdp_ready(cdp_url: str | None = None) -> str:
-    url = cdp_url or require_cdp_url()
+    url = normalize_cdp_url(cdp_url) if cdp_url else require_cdp_url()
+    if cdp_url:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https", "ws", "wss"} or not parsed.hostname:
+            raise CdpConfigError(f"CDP_URL must be an http(s) or ws(s) endpoint: {cdp_url}")
     if not is_valid_cdp(url):
         raise CdpConfigError(f"CDP endpoint is not available or not compliant: {url}")
     return url

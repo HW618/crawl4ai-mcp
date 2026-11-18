@@ -28,21 +28,29 @@ def _read_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    data = json.dumps(payload, indent=2) + "\n"
+    with tmp.open("w", encoding="utf-8") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
 def resolve_api_key(env: Mapping[str, str], data_dir: Path) -> str:
     data_dir.mkdir(parents=True, exist_ok=True)
     cred_path = data_dir / CREDENTIALS_NAME
     env_key = str(env.get("API_KEY", "")).strip()
     if env_key:
-        cred_path.write_text(
-            json.dumps({"api_key": env_key}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _write_json_atomic(cred_path, {"api_key": env_key})
         return env_key
     existing = _read_json(cred_path)
     if existing and isinstance(existing.get("api_key"), str) and existing["api_key"].strip():
         return existing["api_key"].strip()
     key = secrets.token_urlsafe(32)
-    cred_path.write_text(json.dumps({"api_key": key}, indent=2) + "\n", encoding="utf-8")
+    _write_json_atomic(cred_path, {"api_key": key})
     return key
 
 
