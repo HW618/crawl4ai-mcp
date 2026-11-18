@@ -18,6 +18,8 @@ See [upgrading-crawl4ai.md](upgrading-crawl4ai.md) for the pin-bump process.
 
 Internal CDP URL used by MCP: `http://cloakbrowser:9222`.
 
+Publishing a GitHub Release runs `.github/workflows/release-image.yml` on InstaBox (`instabox-medium`) and pushes `linux/amd64` to `ghcr.io/<owner>/<repo>`. The image is tagged with the release tag. A stable release also moves `latest`. Pre-releases do not. The instabox GitHub App must be installed on the repository, and the workflow file has to be on the default branch.
+
 ## Start / stop
 
 ```bash
@@ -72,6 +74,6 @@ Baseline before these changes: example.com 1st/2nd were both ~1 s (no session re
 3. **TTL crawl cache** — successful `CrawlResult`s cached in-process (`CRAWL_CACHE_TTL_SEC`, default `60`; `0` disables). Repeated agent converts/summaries of the same URL reuse the cached crawl.
 4. **`max_chars` on `convert_url`** — optional MCP tool argument; omit to keep the converter default (50k).
 
-Still optional later: request queue / concurrency caps for CloakBrowser session limits; richer selector probing without full re-navigation.
+`CRAWL_MAX_CONCURRENCY` (default `1`) caps overlapping CDP work so CloakBrowser is not asked for parallel sessions. Nested crawls on the same task reuse that slot. Selector fallbacks are probed on the HTML from the first navigation; another navigation runs only when that response has no HTML.
 
 Compose already sets `CRAWL4AI_NO_CLOUD_NOTICE=1` and `CRAWL_CACHE_TTL_SEC`.

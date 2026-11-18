@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -83,6 +85,9 @@ class CrawlerPool:
 
 _pool = CrawlerPool()
 _cache: TtlCache[CrawlResult] = TtlCache(ttl_sec=60.0)
+_crawl_hold = contextvars.ContextVar("crawl_hold", default=0)
+_crawl_semaphore: asyncio.Semaphore | None = None
+_crawl_semaphore_size: int | None = None
 
 
 def _cache_ttl_from_env() -> float:
@@ -98,10 +103,54 @@ def _refresh_cache_from_env() -> None:
     _cache = TtlCache(ttl_sec=_cache_ttl_from_env())
 
 
+def _max_concurrency() -> int:
+    raw = os.environ.get("CRAWL_MAX_CONCURRENCY", "1").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
+def _reset_crawl_limiter() -> None:
+    global _crawl_semaphore, _crawl_semaphore_size
+    _crawl_semaphore = None
+    _crawl_semaphore_size = None
+
+
+def _crawl_semaphore_for_now() -> asyncio.Semaphore:
+    global _crawl_semaphore, _crawl_semaphore_size
+    size = _max_concurrency()
+    if _crawl_semaphore is None or _crawl_semaphore_size != size:
+        _crawl_semaphore = asyncio.Semaphore(size)
+        _crawl_semaphore_size = size
+    return _crawl_semaphore
+
+
+@contextlib.asynccontextmanager
+async def crawl_slot():
+    """Limit overlapping CDP work. Nested calls on the same task reuse the slot."""
+    if _crawl_hold.get() > 0:
+        token = _crawl_hold.set(_crawl_hold.get() + 1)
+        try:
+            yield
+        finally:
+            _crawl_hold.reset(token)
+        return
+    semaphore = _crawl_semaphore_for_now()
+    await semaphore.acquire()
+    token = _crawl_hold.set(1)
+    try:
+        yield
+    finally:
+        _crawl_hold.reset(token)
+        semaphore.release()
+
+
 async def reset_crawler_runtime() -> None:
     """Test helper: drop shared crawler + cache."""
     await _pool.close()
     _refresh_cache_from_env()
+    _reset_crawl_limiter()
 
 
 def require_cdp_url(env: Mapping[str, str] | None = None) -> str:
@@ -241,6 +290,96 @@ def _content_selectors(strategy: SiteStrategy) -> list[str | None]:
     return [strategy.css_selector, *strategy.css_selector_fallbacks]
 
 
+def _page_js(strategy: SiteStrategy, selector: str | None) -> list[str] | None:
+    """Site snippets plus the meta-inject script used when a content selector is set."""
+    snippets = list(strategy.js_snippets)
+    if selector:
+        snippets.append(_build_meta_inject_js(selector, strategy))
+    return snippets or None
+
+
+def _fragment_html(html: str, selector: str, excluded_selector: str | None) -> str:
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        return ""
+    nodes = soup.select(selector)
+    if not nodes:
+        return ""
+    if excluded_selector:
+        for node in nodes:
+            for bad in node.select(excluded_selector):
+                bad.decompose()
+    return "".join(str(node) for node in nodes)
+
+
+def _markdown_from_html(html: str, base_url: str) -> str:
+    if not html.strip():
+        return ""
+    generated = build_markdown_generator().generate_markdown(
+        html,
+        base_url=base_url,
+        citations=False,
+    )
+    raw = getattr(generated, "raw_markdown", None)
+    text = str(raw if raw is not None else generated)
+    return _dedupe_repeats(text)
+
+
+def _result_from_probe(
+    base: CrawlResult,
+    strategy: SiteStrategy,
+    markdown: str,
+    fragment: str,
+) -> CrawlResult:
+    injected = _extract_injected_meta(base.html or "")
+    out = CrawlResult(
+        url=base.url,
+        html=fragment or base.html,
+        markdown=markdown,
+        strategy_name=strategy.name or base.strategy_name,
+        title=_clean_title(injected.get("title") or base.title, strategy),
+        author=injected.get("author") or base.author,
+        date=injected.get("date") or base.date,
+    )
+    out.success = bool((out.markdown or "").strip())
+    if not out.success:
+        out.error = f"页面加载成功但未提取到正文（策略：{strategy.name}）"
+        out.error_kind = "page"
+    return out
+
+
+def _choose_selector_markdown(
+    base: CrawlResult,
+    strategy: SiteStrategy,
+    selectors: list[str],
+) -> CrawlResult:
+    """Pick a content selector from HTML already fetched. Does not navigate again."""
+    best: CrawlResult | None = None
+    for selector in selectors:
+        fragment = _fragment_html(base.html, selector, strategy.excluded_selector)
+        if not fragment:
+            continue
+        candidate = _result_from_probe(
+            base,
+            strategy,
+            _markdown_from_html(fragment, base.url),
+            fragment,
+        )
+        if candidate.success and len(candidate.markdown) >= MIN_ACCEPT_CHARS:
+            return candidate
+        if best is None or len(candidate.markdown or "") > len(best.markdown or ""):
+            best = candidate
+    return best or base
+
+
+def _needs_content_retry(result: CrawlResult) -> bool:
+    """True when a deep-crawl hit loaded but extracted no markdown."""
+    if result.error_kind == "browser" or not result.url:
+        return False
+    return not (result.markdown or "").strip()
+
+
 def _cache_key(url: str, strategy_name: str) -> str:
     return f"{strategy_name}\n{url}"
 
@@ -253,7 +392,8 @@ async def _crawl_once(
     verbose: bool,
     css_selector: str | None,
 ) -> CrawlResult:
-    selector = strategy.css_selector if css_selector is None else css_selector
+    # None means capture the full page. Meta-inject still targets the strategy selector.
+    selector = css_selector
     run_cfg = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         markdown_generator=build_markdown_generator(),
@@ -261,11 +401,7 @@ async def _crawl_once(
         excluded_selector=strategy.excluded_selector,
         excluded_tags=["script", "style", "noscript", "iframe", "nav", "footer"],
         wait_for=strategy.wait_for,
-        js_code=(
-            strategy.js_snippets
-            + ([_build_meta_inject_js(selector, strategy)] if selector else [])
-        )
-        or None,
+        js_code=_page_js(strategy, selector or strategy.css_selector),
         page_timeout=timeout_ms,
         word_count_threshold=5,
         verbose=verbose,
@@ -362,9 +498,15 @@ def _map_crawl4ai_result(raw: object, strategy: SiteStrategy) -> CrawlResult:
     if markdown_obj is not None:
         raw_md = getattr(markdown_obj, "raw_markdown", None)
         out.markdown = _dedupe_repeats(str(raw_md if raw_md is not None else markdown_obj))
-    out.title = _clean_title(_pick_meta(meta, "title", "og:title") or "", strategy)
-    out.author = _pick_meta(meta, "author", "article:author")
-    out.date = _pick_meta(meta, "article:published_time", "date", "pubdate")
+    injected = _extract_injected_meta(out.html) if out.html else {}
+    out.title = _clean_title(
+        injected.get("title") or _pick_meta(meta, "title", "og:title") or "",
+        strategy,
+    )
+    out.author = injected.get("author") or _pick_meta(meta, "author", "article:author")
+    out.date = injected.get("date") or _pick_meta(
+        meta, "article:published_time", "date", "pubdate"
+    )
     out.success = bool((out.markdown or "").strip())
     if not out.success:
         out.error = f"页面加载成功但未提取到正文（策略：{strategy.name}）"
@@ -379,15 +521,20 @@ def build_deep_run_config(
     timeout_ms: int,
     verbose: bool = False,
 ) -> CrawlerRunConfig:
-    """Build CrawlerRunConfig for deep crawl using the seed URL's site strategy."""
+    """Build CrawlerRunConfig for deep crawl using the seed URL's site strategy.
+
+    One crawl4ai config can carry only the primary selector. Pages that come
+    back without markdown are re-crawled per URL so fallbacks still run.
+    """
+    selector = seed_strategy.css_selector
     return CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         markdown_generator=build_markdown_generator(),
-        css_selector=seed_strategy.css_selector,
+        css_selector=selector,
         excluded_selector=seed_strategy.excluded_selector,
         excluded_tags=["script", "style", "noscript", "iframe", "nav", "footer"],
         wait_for=seed_strategy.wait_for,
-        js_code=seed_strategy.js_snippets or None,
+        js_code=_page_js(seed_strategy, selector),
         page_timeout=timeout_ms,
         word_count_threshold=5,
         verbose=verbose,
@@ -441,6 +588,26 @@ async def deep_crawl_pages(
         timeout_ms=timeout_ms,
         verbose=verbose,
     )
+    async with crawl_slot():
+        return await _deep_crawl_loaded(
+            url,
+            strategies,
+            resolved=resolved,
+            run_cfg=run_cfg,
+            timeout_ms=timeout_ms,
+            verbose=verbose,
+        )
+
+
+async def _deep_crawl_loaded(
+    url: str,
+    strategies: list[SiteStrategy],
+    *,
+    resolved: str,
+    run_cfg: CrawlerRunConfig,
+    timeout_ms: int,
+    verbose: bool,
+) -> tuple[list[tuple[CrawlResult, int | None, float | None]], str]:
     try:
         crawler = await _pool.get(resolved, verbose)
         raw = await crawler.arun(url=url, config=run_cfg)
@@ -462,6 +629,21 @@ async def deep_crawl_pages(
         hits.append((mapped, d, s))
     if saw_browser:
         await _pool.invalidate()
+    elif hits:
+        for index, (mapped, depth, score) in enumerate(hits):
+            if not _needs_content_retry(mapped):
+                continue
+            recrawled = await crawl_page(
+                mapped.url,
+                strategies,
+                timeout_ms=timeout_ms,
+                verbose=verbose,
+                cdp_url=resolved,
+            )
+            hits[index] = (recrawled, depth, score)
+            if recrawled.error_kind == "browser":
+                await _pool.invalidate()
+                break
     if not hits:
         return [], "Deep crawl returned no pages"
     return hits, ""
@@ -499,8 +681,9 @@ async def fetch_page(
         exclude_internal_links=False,
     )
     try:
-        crawler = await _pool.get(cdp_url=resolved, verbose=verbose)
-        result = await crawler.arun(url=url, config=run_cfg)
+        async with crawl_slot():
+            crawler = await _pool.get(cdp_url=resolved, verbose=verbose)
+            result = await crawler.arun(url=url, config=run_cfg)
     except Exception as exc:
         out.error = _short_error(exc)
         out.error_kind = "browser" if _is_browser_error(exc) else "page"
@@ -541,28 +724,29 @@ async def crawl_many_pages(
 ) -> tuple[list[CrawlResult], str]:
     """Crawl an explicit URL list without deep-link discovery (order preserved)."""
     results: list[CrawlResult] = []
-    for index, item in enumerate(urls):
-        result = await crawl_page(
-            item,
-            strategies,
-            timeout_ms=timeout_ms,
-            verbose=verbose,
-            cdp_url=cdp_url,
-        )
-        results.append(result)
-        if result.error_kind == "browser":
-            await _pool.invalidate()
-            skip_msg = result.error or "CDP browser connection failed"
-            for skipped in urls[index + 1 :]:
-                results.append(
-                    CrawlResult(
-                        url=skipped,
-                        success=False,
-                        error=f"skipped after CDP failure: {skip_msg}",
-                        error_kind="browser",
+    async with crawl_slot():
+        for index, item in enumerate(urls):
+            result = await crawl_page(
+                item,
+                strategies,
+                timeout_ms=timeout_ms,
+                verbose=verbose,
+                cdp_url=cdp_url,
+            )
+            results.append(result)
+            if result.error_kind == "browser":
+                await _pool.invalidate()
+                skip_msg = result.error or "CDP browser connection failed"
+                for skipped in urls[index + 1 :]:
+                    results.append(
+                        CrawlResult(
+                            url=skipped,
+                            success=False,
+                            error=f"skipped after CDP failure: {skip_msg}",
+                            error_kind="browser",
+                        )
                     )
-                )
-            return results, ""
+                return results, ""
     return results, ""
 
 
@@ -590,19 +774,26 @@ async def crawl_page(
             logger.debug("crawl cache hit for %s", url)
             return cached
 
-    selectors = _content_selectors(strategy)
-    best: CrawlResult | None = None
-    for sel in selectors:
-        result = await _crawl_once(url, strategy, resolved, timeout_ms, verbose, sel)
+    async with crawl_slot():
+        selectors = [sel for sel in _content_selectors(strategy) if sel]
+        result = await _crawl_once(url, strategy, resolved, timeout_ms, verbose, None)
         if result.error_kind == "browser":
             return result
-        if result.success and len(result.markdown) >= MIN_ACCEPT_CHARS:
-            if use_cache:
-                _cache.set(key, result)
-            return result
-        if best is None or len(result.markdown or "") > len(best.markdown or ""):
+        if selectors and result.html:
+            result = _choose_selector_markdown(result, strategy, selectors)
+        elif selectors:
             best = result
-    final = best or CrawlResult(url=url, strategy_name=strategy.name, error="crawl failed", error_kind="page")
-    if use_cache and final.success:
-        _cache.set(key, final)
-    return final
+            for sel in selectors:
+                probed = await _crawl_once(url, strategy, resolved, timeout_ms, verbose, sel)
+                if probed.error_kind == "browser":
+                    return probed
+                if probed.success and len(probed.markdown) >= MIN_ACCEPT_CHARS:
+                    result = probed
+                    break
+                if best is None or len(probed.markdown or "") > len(best.markdown or ""):
+                    best = probed
+            else:
+                result = best or result
+        if use_cache and result.success:
+            _cache.set(key, result)
+        return result
