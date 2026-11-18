@@ -1,0 +1,11 @@
+name: Hacker News
+domains:
+  - news.ycombinator.com
+css_selector: "#bigbox table"
+css_selector_fallbacks:
+  - "#bigbox"
+  - "table.itemlist"
+  - "tr.athing"
+excluded_selector: "script, style"
+wait_for: "css:#bigbox, table.itemlist, tr.athing"
+title_selector: "title"

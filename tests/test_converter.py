@@ -44,6 +44,82 @@ def test_convert_strips_images_and_links():
     assert "pic" in text
 
 
+def test_simple_html_table_becomes_a_pipe_table():
+    text = convert_to_markdown(
+        _ok(
+            markdown="Intro paragraph.<table><tr><th>A</th><th>B</th></tr><tr><td colspan=\"2\">wide</td></tr><tr><td>1</td><td>2</td></tr></table>Outro paragraph.",
+            title="Hello",
+        ),
+        include_metadata=False,
+    )
+    assert "<table" not in text.lower()
+    table = "| A | B |\n| --- | --- |\n| wide |  |\n| 1 | 2 |"
+    assert f"Intro paragraph.\n\n{table}\n\nOutro paragraph." in text
+
+
+def test_nested_layout_table_keeps_story_link_without_html():
+    html = """
+    <table id="hnmain"><tr><td>
+      <table class="itemlist">
+        <tr class="athing">
+          <td class="title"><span class="rank">1.</span></td>
+          <td></td>
+          <td class="title"><a href="https://example.com/post">Example story</a></td>
+        </tr>
+        <tr><td colspan="2"></td><td class="subtext">10 points by ada | 3 comments</td></tr>
+      </table>
+    </td></tr></table>
+    """
+    text = convert_to_markdown(_ok(markdown=html, title="Hacker News"), include_metadata=False)
+    assert "<table" not in text.lower()
+    assert "| 1. |  | [Example story](https://example.com/post) |" in text
+    assert "| --- | --- | --- |" in text
+    assert "|  |  | 10 points by ada \\| 3 comments |" in text
+
+
+def test_rowspan_continuation_keeps_later_columns_aligned():
+    shifted = """
+    <table>
+      <tr><td>A</td><td>B</td><td rowspan="2">C</td></tr>
+      <tr><td>D</td></tr>
+      <tr><td>E</td><td>F</td><td>G</td></tr>
+    </table>
+    """
+    text = convert_to_markdown(_ok(markdown=shifted, title="Grid"), include_metadata=False)
+    assert (
+        "| A | B | C |\n"
+        "| --- | --- | --- |\n"
+        "| D |  |  |\n"
+        "| E | F | G |"
+    ) in text
+
+    empty_row = """
+    <table>
+      <tr><td rowspan="2">A</td><td rowspan="2">B</td></tr>
+      <tr></tr>
+      <tr><td>C</td><td>D</td></tr>
+    </table>
+    """
+    text = convert_to_markdown(_ok(markdown=empty_row, title="Grid"), include_metadata=False)
+    assert (
+        "| A | B |\n"
+        "| --- | --- |\n"
+        "|  |  |\n"
+        "| C | D |"
+    ) in text
+
+
+def test_layout_row_tags_do_not_survive_table_conversion():
+    html = (
+        '<tr id="bigbox"><td><table><tr><td>1.</td>'
+        '<td><a href="https://example.com/post">Story</a></td></tr></table></td></tr>'
+    )
+    text = convert_to_markdown(_ok(markdown=html, title="Hacker News"), include_metadata=False)
+    assert "<tr" not in text.lower()
+    assert "<td" not in text.lower()
+    assert "Story" in text
+
+
 def test_extract_summary_respects_max_length():
     long_md = "word " * 500
     text = extract_summary(_ok(markdown=long_md, title="T"), max_length=40)
