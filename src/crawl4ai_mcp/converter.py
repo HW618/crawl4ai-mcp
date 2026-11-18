@@ -105,21 +105,26 @@ def _table_grid(table) -> list[list[str]]:
         row: list[str] = []
         col = 0
         cell_i = 0
-        while cell_i < len(parsed) or any(count > 0 for count in pending.values()):
+        while True:
             if pending.get(col, 0) > 0:
                 row.append("")
                 pending[col] -= 1
                 col += 1
                 continue
-            if cell_i >= len(parsed):
-                break
-            text, colspan, rowspan = parsed[cell_i]
-            cell_i += 1
-            for offset in range(colspan):
-                row.append(text if offset == 0 else "")
-                if rowspan > 1:
-                    pending[col] = rowspan - 1
+            if cell_i < len(parsed):
+                text, colspan, rowspan = parsed[cell_i]
+                cell_i += 1
+                for offset in range(colspan):
+                    row.append(text if offset == 0 else "")
+                    if rowspan > 1:
+                        pending[col] = rowspan - 1
+                    col += 1
+                continue
+            if any(index > col and count > 0 for index, count in pending.items()):
+                row.append("")
                 col += 1
+                continue
+            break
         if row:
             grid.append(row)
     if not grid:

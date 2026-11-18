@@ -77,6 +77,38 @@ def test_nested_layout_table_keeps_story_link_without_html():
     assert "|  |  | 10 points by ada \\| 3 comments |" in text
 
 
+def test_rowspan_continuation_keeps_later_columns_aligned():
+    shifted = """
+    <table>
+      <tr><td>A</td><td>B</td><td rowspan="2">C</td></tr>
+      <tr><td>D</td></tr>
+      <tr><td>E</td><td>F</td><td>G</td></tr>
+    </table>
+    """
+    text = convert_to_markdown(_ok(markdown=shifted, title="Grid"), include_metadata=False)
+    assert (
+        "| A | B | C |\n"
+        "| --- | --- | --- |\n"
+        "| D |  |  |\n"
+        "| E | F | G |"
+    ) in text
+
+    empty_row = """
+    <table>
+      <tr><td rowspan="2">A</td><td rowspan="2">B</td></tr>
+      <tr></tr>
+      <tr><td>C</td><td>D</td></tr>
+    </table>
+    """
+    text = convert_to_markdown(_ok(markdown=empty_row, title="Grid"), include_metadata=False)
+    assert (
+        "| A | B |\n"
+        "| --- | --- |\n"
+        "|  |  |\n"
+        "| C | D |"
+    ) in text
+
+
 def test_layout_row_tags_do_not_survive_table_conversion():
     html = (
         '<tr id="bigbox"><td><table><tr><td>1.</td>'
